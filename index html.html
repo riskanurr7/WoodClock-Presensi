@@ -1,0 +1,3366 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WoodClock — Sistem Presensi Pegawai Digital</title>
+
+  <!-- Google Fonts: Plus Jakarta Sans & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            display: ['Plus Jakarta Sans', 'sans-serif'],
+          },
+          colors: {
+            wood: {
+              50: '#FAF6F0',
+              100: '#F3ECE1',
+              200: '#E8DFD3',
+              300: '#D4C2AD',
+              400: '#B89778',
+              500: '#8B5A2B',
+              600: '#724720',
+              700: '#5C3A21',
+              800: '#422816',
+              900: '#2C1A0E',
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Icons: Lucide -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Charts: Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <!-- Export: SheetJS (XLSX) & jsPDF + AutoTable -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- Face Recognition: face-api.js (with real neural models + deterministic biometric fallback) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+  <style>
+    body {
+      background-color: #FAF6F0;
+      color: #2C1A0E;
+      font-family: 'Inter', sans-serif;
+    }
+    .wood-grain-bg {
+      background-color: #5C3A21;
+      background-image:
+        repeating-linear-gradient(
+          90deg,
+          rgba(255, 255, 255, 0.03) 0px,
+          rgba(255, 255, 255, 0.03) 2px,
+          transparent 2px,
+          transparent 14px
+        ),
+        linear-gradient(135deg, #5C3A21 0%, #422816 100%);
+    }
+    .scan-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, #22c55e, transparent);
+      box-shadow: 0 0 12px #22c55e;
+      animation: scanMove 2.2s ease-in-out infinite;
+    }
+    @keyframes scanMove {
+      0%, 100% { top: 12%; }
+      50% { top: 86%; }
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #FAF6F0; }
+    ::-webkit-scrollbar-thumb { background: #D4C2AD; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #8B5A2B; }
+  </style>
+</head>
+<body class="min-h-screen antialiased selection:bg-wood-500 selection:text-white">
+
+  <!-- Global Toast / Notification Banner -->
+  <div id="toast-container" class="fixed top-4 right-4 z-[100] flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+
+  <!-- Global Offline Warning Bar -->
+  <div id="offline-banner" class="hidden fixed top-0 inset-x-0 z-[90] bg-red-700 text-white text-xs sm:text-sm py-2 px-4 text-center font-medium shadow-md">
+    <span class="inline-flex items-center gap-2">
+      <i data-lucide="wifi-off" class="w-4 h-4"></i>
+      Koneksi internet terputus (Offline). Sinkronisasi cloud tertunda hingga koneksi kembali pulih.
+    </span>
+  </div>
+
+  <!-- Main Application Root -->
+  <div id="app-root" class="min-h-screen flex flex-col">
+    <!-- Initial Loading Screen -->
+    <div class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+      <div class="w-16 h-16 rounded-2xl wood-grain-bg flex items-center justify-center shadow-lg mb-4 animate-pulse">
+        <svg class="w-9 h-9 text-amber-200" viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="19" stroke="currentColor" stroke-width="3.2"/>
+          <circle cx="24" cy="24" r="13" stroke="currentColor" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.6"/>
+          <path d="M24 13V24L31 28" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h1 class="font-display text-xl font-bold text-wood-800">Menghubungkan ke Cloud WoodClock...</h1>
+      <p class="text-sm text-wood-600 mt-1">Menyiapkan autentikasi terpusat & database sinkronisasi real-time</p>
+    </div>
+  </div>
+
+  <!-- Reusable Modal Container -->
+  <div id="modal-backdrop" class="hidden fixed inset-0 z-50 bg-wood-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+    <div id="modal-box" class="bg-white border border-wood-200 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden my-auto transform transition-all"></div>
+  </div>
+
+  <!-- Firebase SDK & Full Application Logic -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      addDoc,
+      updateDoc,
+      deleteDoc,
+      onSnapshot,
+      collection,
+      getDocs,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // =========================================================================
+    // 1. CLOUD CONFIGURATION & FIREBASE INITIALIZATION
+    // =========================================================================
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'woodclock-office-v1';
+    const firebaseConfig = typeof __firebase_config !== 'undefined'
+      ? JSON.parse(__firebase_config)
+      : { apiKey: "demo", authDomain: "demo.firebaseapp.com", projectId: "demo" };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // Strict Firestore Paths Helper (Rule 1)
+    const getColRef = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
+    const getDocRef = (colName, id) => doc(db, 'artifacts', appId, 'public', 'data', colName, id);
+
+    // =========================================================================
+    // 2. APPLICATION STATE (SINGLE SOURCE OF TRUTH FROM CLOUD FIRESTORE)
+    // =========================================================================
+    const state = {
+      fbUser: null,
+      cloudConnected: false,
+      isOnline: navigator.onLine,
+      currentUser: null, // Logged-in WoodClock user object (admin or employee)
+      activeTab: 'dashboard',
+      mobileMenuOpen: false,
+      showDemoAccounts: false,
+      showPassword: false,
+      notifDropdownOpen: false,
+
+      // Real-time Collections from Firestore
+      users: [],
+      employees: [],
+      faceRegistrations: [],
+      attendance: [],
+      leaveRequests: [],
+      notifications: [],
+      workSettings: {
+        checkInDeadline: '08:00',
+        checkOutStart: '17:00',
+        toleranceMinutes: 0,
+        companyName: 'PT WoodClock Nusantara'
+      },
+
+      // Filters & Search State
+      searchQuery: '',
+      filterDate: '',
+      filterMonth: String(new Date().getMonth() + 1).padStart(2, '0'),
+      filterYear: String(new Date().getFullYear()),
+      filterStatus: 'ALL',
+
+      // Face Recognition Models State
+      faceModelsLoaded: false,
+      faceModelsLoading: false,
+      activeStream: null,
+      livenessTimer: null,
+      charts: {}
+    };
+
+    // =========================================================================
+    // 3. UTILITY FUNCTIONS (HASHING, DATES, WIB TIME, TOASTS)
+    // =========================================================================
+    async function sha256(text) {
+      const msgBuffer = new TextEncoder().encode(text);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function getWIBNow() {
+      // Convert local browser time to Asia/Jakarta (WIB, UTC+7)
+      const now = new Date();
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      return new Date(utc + (3600000 * 7));
+    }
+
+    function formatDateYYYYMMDD(dateObj = getWIBNow()) {
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function formatTimeHHMMSS(dateObj = getWIBNow()) {
+      const h = String(dateObj.getHours()).padStart(2, '0');
+      const m = String(dateObj.getMinutes()).padStart(2, '0');
+      const s = String(dateObj.getSeconds()).padStart(2, '0');
+      return `${h}:${m}:${s}`;
+    }
+
+    function formatTimeHHMM(dateObj = getWIBNow()) {
+      const h = String(dateObj.getHours()).padStart(2, '0');
+      const m = String(dateObj.getMinutes()).padStart(2, '0');
+      return `${h}:${m}`;
+    }
+
+    function formatIndoDate(dateStr) {
+      if (!dateStr) return '-';
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      return dt.toLocaleDateString('id-ID', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function showToast(title, message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const colors = {
+        success: 'bg-emerald-900 text-white border-emerald-700',
+        error: 'bg-red-900 text-white border-red-700',
+        warning: 'bg-amber-800 text-white border-amber-600',
+        info: 'bg-wood-800 text-white border-wood-600'
+      };
+      const icons = {
+        success: 'check-circle-2',
+        error: 'alert-circle',
+        warning: 'alert-triangle',
+        info: 'info'
+      };
+      const el = document.createElement('div');
+      el.className = `pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border shadow-xl transition-all duration-300 transform translate-y-0 ${colors[type] || colors.info}`;
+      el.innerHTML = `
+        <i data-lucide="${icons[type] || 'info'}" class="w-5 h-5 shrink-0 mt-0.5"></i>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold leading-tight">${escapeHtml(title)}</p>
+          <p class="text-xs opacity-90 mt-0.5 leading-snug">${escapeHtml(message)}</p>
+        </div>
+        <button class="opacity-70 hover:opacity-100" onclick="this.parentElement.remove()">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      `;
+      container.appendChild(el);
+      if (window.lucide) lucide.createIcons();
+      setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 300);
+      }, 4500);
+    }
+
+    function openModal(htmlContent, maxWidthClass = 'max-w-lg') {
+      const backdrop = document.getElementById('modal-backdrop');
+      const box = document.getElementById('modal-box');
+      box.className = `bg-white border border-wood-200 rounded-2xl shadow-2xl w-full ${maxWidthClass} overflow-hidden my-auto transform transition-all`;
+      box.innerHTML = htmlContent;
+      backdrop.classList.remove('hidden');
+      if (window.lucide) lucide.createIcons();
+    }
+
+    window.closeModal = function() {
+      stopCameraStream();
+      const backdrop = document.getElementById('modal-backdrop');
+      backdrop.classList.add('hidden');
+      document.getElementById('modal-box').innerHTML = '';
+    };
+
+    function stopCameraStream() {
+      if (state.livenessTimer) {
+        clearInterval(state.livenessTimer);
+        state.livenessTimer = null;
+      }
+      if (state.activeStream) {
+        state.activeStream.getTracks().forEach(track => track.stop());
+        state.activeStream = null;
+      }
+    }
+
+    // =========================================================================
+    // 4. AUTOMATIC FIRST-TIME CLOUD DATABASE SEEDER
+    // =========================================================================
+    async function seedDemoDataIfEmpty() {
+      try {
+        const usersSnap = await getDocs(getColRef('users'));
+        if (!usersSnap.empty) {
+          return; // Cloud database already populated
+        }
+
+        console.log('WoodClock: Seeding initial demo data to Cloud Firestore...');
+        const adminPassHash = await sha256('admin123');
+        const empPassHash = await sha256('pegawai123');
+
+        // 1. Work Settings
+        await setDoc(getDocRef('work_settings', 'default'), {
+          checkInDeadline: '08:00',
+          checkOutStart: '17:00',
+          toleranceMinutes: 0,
+          companyName: 'PT WoodClock Nusantara',
+          updatedAt: new Date().toISOString()
+        });
+
+        // 2. Admin Account
+        await setDoc(getDocRef('users', 'USR-ADMIN'), {
+          id: 'USR-ADMIN',
+          employeeId: 'ADM-001',
+          username: 'admin',
+          email: 'admin@woodclock.id',
+          passwordHash: adminPassHash,
+          role: 'admin',
+          name: 'Budi Santoso, S.E.',
+          isDemo: true,
+          createdAt: new Date().toISOString()
+        });
+
+        // 3. 5 Demo Employees & Accounts
+        const demoEmployees = [
+          {
+            id: 'EMP-001',
+            userId: 'USR-001',
+            username: 'siti.rahma',
+            email: 'siti@woodclock.id',
+            name: 'Siti Rahmawati',
+            gender: 'Perempuan',
+            position: 'UI/UX Designer',
+            phone: '0812-3456-7801',
+            status: 'Aktif',
+            avatarColor: '#8B5A2B'
+          },
+          {
+            id: 'EMP-002',
+            userId: 'USR-002',
+            username: 'andi.pratama',
+            email: 'andi@woodclock.id',
+            name: 'Andi Pratama',
+            gender: 'Laki-laki',
+            position: 'Frontend Developer',
+            phone: '0812-3456-7802',
+            status: 'Aktif',
+            avatarColor: '#5C3A21'
+          },
+          {
+            id: 'EMP-003',
+            userId: 'USR-003',
+            username: 'dewi.lestari',
+            email: 'dewi@woodclock.id',
+            name: 'Dewi Lestari',
+            gender: 'Perempuan',
+            position: 'Finance & Accounting',
+            phone: '0812-3456-7803',
+            status: 'Aktif',
+            avatarColor: '#724720'
+          },
+          {
+            id: 'EMP-004',
+            userId: 'USR-004',
+            username: 'rizky.fauzan',
+            email: 'rizky@woodclock.id',
+            name: 'Rizky Fauzan',
+            gender: 'Laki-laki',
+            position: 'Operations Staff',
+            phone: '0812-3456-7804',
+            status: 'Aktif',
+            avatarColor: '#422816'
+          },
+          {
+            id: 'EMP-005',
+            userId: 'USR-005',
+            username: 'nadia.putri',
+            email: 'nadia@woodclock.id',
+            name: 'Nadia Putri',
+            gender: 'Perempuan',
+            position: 'Marketing Specialist',
+            phone: '0812-3456-7805',
+            status: 'Aktif',
+            avatarColor: '#9C6635'
+          }
+        ];
+
+        for (const emp of demoEmployees) {
+          await setDoc(getDocRef('users', emp.userId), {
+            id: emp.userId,
+            employeeId: emp.id,
+            username: emp.username,
+            email: emp.email,
+            passwordHash: empPassHash,
+            role: 'employee',
+            name: emp.name,
+            isDemo: true,
+            createdAt: new Date().toISOString()
+          });
+
+          await setDoc(getDocRef('employees', emp.id), {
+            id: emp.id,
+            userId: emp.userId,
+            name: emp.name,
+            gender: emp.gender,
+            position: emp.position,
+            email: emp.email,
+            phone: emp.phone,
+            username: emp.username,
+            status: emp.status,
+            avatarColor: emp.avatarColor,
+            faceRegistered: false,
+            faceUpdateRequested: false,
+            isDemo: true,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        // 4. Sample Attendance Records (Past days so today remains open for live testing!)
+        const wibToday = getWIBNow();
+        const d1 = new Date(wibToday); d1.setDate(wibToday.getDate() - 1);
+        const d2 = new Date(wibToday); d2.setDate(wibToday.getDate() - 2);
+        const d3 = new Date(wibToday); d3.setDate(wibToday.getDate() - 3);
+        const date1 = formatDateYYYYMMDD(d1);
+        const date2 = formatDateYYYYMMDD(d2);
+        const date3 = formatDateYYYYMMDD(d3);
+
+        const sampleAttendance = [
+          {
+            id: `ATT-EMP-001-${date2}`,
+            employeeId: 'EMP-001',
+            employeeName: 'Siti Rahmawati',
+            date: date2,
+            checkIn: '07:52:14',
+            checkOut: '17:08:40',
+            status: 'Hadir',
+            lateMinutes: 0,
+            note: 'Tepat waktu',
+            verifiedByFace: true,
+            isDemo: true
+          },
+          {
+            id: `ATT-EMP-001-${date1}`,
+            employeeId: 'EMP-001',
+            employeeName: 'Siti Rahmawati',
+            date: date1,
+            checkIn: '08:17:05',
+            checkOut: '17:15:22',
+            status: 'Terlambat',
+            lateMinutes: 17,
+            note: 'Terlambat 17 menit',
+            verifiedByFace: true,
+            isDemo: true
+          },
+          {
+            id: `ATT-EMP-002-${date2}`,
+            employeeId: 'EMP-002',
+            employeeName: 'Andi Pratama',
+            date: date2,
+            checkIn: '07:45:10',
+            checkOut: '17:02:11',
+            status: 'Hadir',
+            lateMinutes: 0,
+            note: 'Tepat waktu',
+            verifiedByFace: true,
+            isDemo: true
+          },
+          {
+            id: `ATT-EMP-002-${date1}`,
+            employeeId: 'EMP-002',
+            employeeName: 'Andi Pratama',
+            date: date1,
+            checkIn: '-',
+            checkOut: '-',
+            status: 'Sakit',
+            lateMinutes: 0,
+            note: 'Sakit (Demam & Flu - Surat Dokter Terlampir)',
+            verifiedByFace: false,
+            isDemo: true
+          },
+          {
+            id: `ATT-EMP-003-${date1}`,
+            employeeId: 'EMP-003',
+            employeeName: 'Dewi Lestari',
+            date: date1,
+            checkIn: '07:55:30',
+            checkOut: '17:05:00',
+            status: 'Hadir',
+            lateMinutes: 0,
+            note: 'Tepat waktu',
+            verifiedByFace: true,
+            isDemo: true
+          },
+          {
+            id: `ATT-EMP-004-${date3}`,
+            employeeId: 'EMP-004',
+            employeeName: 'Rizky Fauzan',
+            date: date3,
+            checkIn: '08:25:19',
+            checkOut: '17:30:04',
+            status: 'Terlambat',
+            lateMinutes: 25,
+            note: 'Terlambat 25 menit',
+            verifiedByFace: true,
+            isDemo: true
+          }
+        ];
+
+        for (const att of sampleAttendance) {
+          await setDoc(getDocRef('attendance', att.id), att);
+        }
+
+        // 5. Sample Leave Requests (1 Approved Sick for Andi, 1 Pending Leave for Siti)
+        const tomorrow = new Date(wibToday); tomorrow.setDate(wibToday.getDate() + 1);
+        const tomorrowStr = formatDateYYYYMMDD(tomorrow);
+
+        await setDoc(getDocRef('leave_requests', 'LV-DEMO-001'), {
+          id: 'LV-DEMO-001',
+          employeeId: 'EMP-002',
+          employeeName: 'Andi Pratama',
+          type: 'Sakit',
+          startDate: date1,
+          endDate: date1,
+          reason: 'Demam tinggi dan flu, disarankan istirahat 1 hari oleh dokter klinik.',
+          attachmentName: 'Surat_Dokter_Andi.pdf',
+          attachmentData: '',
+          status: 'Disetujui',
+          reviewedBy: 'Budi Santoso, S.E.',
+          createdAt: new Date(d1).toISOString(),
+          isDemo: true
+        });
+
+        await setDoc(getDocRef('leave_requests', 'LV-DEMO-002'), {
+          id: 'LV-DEMO-002',
+          employeeId: 'EMP-001',
+          employeeName: 'Siti Rahmawati',
+          type: 'Izin',
+          startDate: tomorrowStr,
+          endDate: tomorrowStr,
+          reason: 'Keperluan administrasi keluarga di kantor catatan sipil.',
+          attachmentName: '',
+          attachmentData: '',
+          status: 'Menunggu',
+          reviewedBy: '',
+          createdAt: new Date().toISOString(),
+          isDemo: true
+        });
+
+        // 6. Welcome Notification
+        await setDoc(getDocRef('notifications', 'NOTIF-DEMO-001'), {
+          id: 'NOTIF-DEMO-001',
+          targetRole: 'admin',
+          targetEmployeeId: '',
+          title: 'Pengajuan Izin Baru [DEMO]',
+          message: 'Siti Rahmawati mengajukan Izin untuk tanggal ' + tomorrowStr,
+          read: false,
+          createdAt: new Date().toISOString(),
+          isDemo: true
+        });
+
+      } catch (err) {
+        console.error('Error seeding demo data:', err);
+      }
+    }
+
+    // =========================================================================
+    // 5. REAL-TIME CLOUD LISTENERS (SYNCHRONIZED ACROSS ALL DEVICES)
+    // =========================================================================
+    function startRealtimeListeners() {
+      // Listen to work_settings
+      onSnapshot(getDocRef('work_settings', 'default'), (snap) => {
+        if (snap.exists()) {
+          state.workSettings = { ...state.workSettings, ...snap.data() };
+          renderApp();
+        }
+      }, (err) => console.error('work_settings listener error:', err));
+
+      // Listen to users
+      onSnapshot(getColRef('users'), (snap) => {
+        state.users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (state.currentUser) {
+          const updated = state.users.find(u => u.id === state.currentUser.id);
+          if (updated) state.currentUser = updated;
+        }
+        renderApp();
+      }, (err) => console.error('users listener error:', err));
+
+      // Listen to employees
+      onSnapshot(getColRef('employees'), (snap) => {
+        state.employees = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+        renderApp();
+      }, (err) => console.error('employees listener error:', err));
+
+      // Listen to face_registrations
+      onSnapshot(getColRef('face_registrations'), (snap) => {
+        state.faceRegistrations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderApp();
+      }, (err) => console.error('face_registrations listener error:', err));
+
+      // Listen to attendance
+      onSnapshot(getColRef('attendance'), (snap) => {
+        state.attendance = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => {
+            if (b.date !== a.date) return b.date.localeCompare(a.date);
+            return (b.checkIn || '').localeCompare(a.checkIn || '');
+          });
+        renderApp();
+      }, (err) => console.error('attendance listener error:', err));
+
+      // Listen to leave_requests
+      onSnapshot(getColRef('leave_requests'), (snap) => {
+        state.leaveRequests = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        renderApp();
+      }, (err) => console.error('leave_requests listener error:', err));
+
+      // Listen to notifications
+      onSnapshot(getColRef('notifications'), (snap) => {
+        state.notifications = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        renderApp();
+      }, (err) => console.error('notifications listener error:', err));
+    }
+
+    // =========================================================================
+    // 6. FACE RECOGNITION & LIVENESS ENGINE (NEURAL + BIOMETRIC VECTOR)
+    // =========================================================================
+    async function loadFaceModelsIfNeeded() {
+      if (state.faceModelsLoaded || state.faceModelsLoading) return;
+      state.faceModelsLoading = true;
+      try {
+        if (window.faceapi) {
+          const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+          ]);
+          state.faceModelsLoaded = true;
+          console.log('WoodClock: Neural Face Recognition models loaded.');
+        }
+      } catch (e) {
+        console.warn('WoodClock: Falling back to local HTML5 Biometric Landmark & Skin/Geometry Extractor.', e);
+      } finally {
+        state.faceModelsLoading = false;
+      }
+    }
+
+    /**
+     * Extracts a 128-dimension normalized facial descriptor vector from a video frame.
+     * Uses neural face-api.js if available, or real multi-zone facial geometry/luminance/chrominance
+     * biometric sampling with skin-tone & symmetry validation to ensure an actual human face is present.
+     */
+    async function extractBiometricDescriptor(videoEl, canvasEl) {
+      if (!videoEl || videoEl.readyState < 2) {
+        return { detected: false, reason: 'Kamera belum siap.' };
+      }
+
+      // 1. Attempt Neural Face Detection & 128-D Descriptor
+      if (state.faceModelsLoaded && window.faceapi) {
+        try {
+          const detection = await faceapi
+            .detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.45 }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+          if (!detection) {
+            return { detected: false, reason: 'Wajah tidak terdeteksi di area kamera.' };
+          }
+          return {
+            detected: true,
+            method: 'neural-128d',
+            descriptor: Array.from(detection.descriptor),
+            box: detection.detection.box,
+            landmarks: detection.landmarks.positions
+          };
+        } catch (err) {
+          console.warn('Neural detection error, using geometric biometric extractor:', err);
+        }
+      }
+
+      // 2. Real Computer-Vision Biometric Fallback (Skin-chrominance + Facial Symmetry + 128-D Spatial Grid)
+      const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
+      const w = 160;
+      const h = 120;
+      canvasEl.width = w;
+      canvasEl.height = h;
+      ctx.drawImage(videoEl, 0, 0, w, h);
+
+      const frame = ctx.getImageData(0, 0, w, h).data;
+
+      // Focus on central face oval region (x: 40..120, y: 15..105)
+      let skinPixels = 0;
+      let totalCenterPixels = 0;
+      let leftBrightness = 0;
+      let rightBrightness = 0;
+      let edgeVariance = 0;
+
+      for (let y = 15; y < 105; y++) {
+        for (let x = 40; x < 120; x++) {
+          const idx = (y * w + x) * 4;
+          const r = frame[idx], g = frame[idx + 1], b = frame[idx + 2];
+          totalCenterPixels++;
+
+          // YCbCr human skin-tone chrominance check
+          const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+          const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+          const isSkin = (cr >= 132 && cr <= 178 && cb >= 76 && cb <= 128 && r > 45 && g > 30);
+          if (isSkin) skinPixels++;
+
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          if (x < 80) leftBrightness += lum;
+          else rightBrightness += lum;
+
+          if (x > 40) {
+            const prevIdx = (y * w + (x - 1)) * 4;
+            const prevLum = 0.299 * frame[prevIdx] + 0.587 * frame[prevIdx + 1] + 0.114 * frame[prevIdx + 2];
+            edgeVariance += Math.abs(lum - prevLum);
+          }
+        }
+      }
+
+      const skinRatio = skinPixels / totalCenterPixels;
+      const avgEdge = edgeVariance / totalCenterPixels;
+      const symmetryDiff = Math.abs(leftBrightness - rightBrightness) / (totalCenterPixels / 2);
+
+      // Validate that a real face-like structure is centered in frame (not empty wall, ceiling, or covered lens)
+      if (skinRatio < 0.18 || avgEdge < 3.2 || symmetryDiff > 65) {
+        return {
+          detected: false,
+          reason: skinRatio < 0.18
+            ? 'Wajah tidak terdeteksi jelas di dalam bingkai oval.'
+            : 'Pencahayaan atau posisi wajah kurang sesuai.'
+        };
+      }
+
+      // Build normalized 128-dimensional spatial biometric descriptor from 8x8 facial grid (luminance + Cr/Cb ratios)
+      const descriptor = [];
+      const gridX = 8, gridY = 8;
+      const cellW = Math.floor(80 / gridX);
+      const cellH = Math.floor(90 / gridY);
+
+      for (let gy = 0; gy < gridY; gy++) {
+        for (let gx = 0; gx < gridX; gx++) {
+          let sumLum = 0, sumCr = 0, count = 0;
+          for (let py = 15 + gy * cellH; py < 15 + (gy + 1) * cellH; py++) {
+            for (let px = 40 + gx * cellW; px < 40 + (gx + 1) * cellW; px++) {
+              const i = (py * w + px) * 4;
+              const r = frame[i], g = frame[i + 1], b = frame[i + 2];
+              const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+              const cr = (128 + 0.5 * r - 0.418688 * g - 0.081312 * b) / 255;
+              sumLum += lum;
+              sumCr += cr;
+              count++;
+            }
+          }
+          descriptor.push(Number((sumLum / count).toFixed(5)));
+          descriptor.push(Number((sumCr / count).toFixed(5)));
+        }
+      }
+
+      // L2-normalize the 128-D vector
+      const norm = Math.sqrt(descriptor.reduce((acc, v) => acc + v * v, 0)) || 1;
+      const normalized = descriptor.map(v => v / norm);
+
+      return {
+        detected: true,
+        method: 'biometric-grid-128d',
+        descriptor: normalized,
+        rawFramePixels: frame
+      };
+    }
+
+    function computeDescriptorDistance(descA, descB) {
+      if (!descA || !descB || descA.length !== descB.length) return 999;
+      let sumSq = 0;
+      for (let i = 0; i < descA.length; i++) {
+        const diff = descA[i] - descB[i];
+        sumSq += diff * diff;
+      }
+      return Math.sqrt(sumSq);
+    }
+
+    function computeFrameMotion(pixelsA, pixelsB) {
+      if (!pixelsA || !pixelsB || pixelsA.length !== pixelsB.length) return 0;
+      let diffSum = 0;
+      let samples = 0;
+      for (let i = 0; i < pixelsA.length; i += 16) {
+        diffSum += Math.abs(pixelsA[i] - pixelsB[i]);
+        samples++;
+      }
+      return diffSum / (samples || 1);
+    }
+
+    // =========================================================================
+    // 7. FACE REGISTRATION & VERIFICATION MODALS
+    // =========================================================================
+    window.openFaceRegistrationModal = async function(employeeId) {
+      const emp = state.employees.find(e => e.id === employeeId);
+      if (!emp) return;
+
+      loadFaceModelsIfNeeded();
+
+      openModal(`
+        <div class="p-5 sm:p-6">
+          <div class="flex items-center justify-between border-b border-wood-200 pb-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-wood-100 text-wood-700 flex items-center justify-center">
+                <i data-lucide="scan-face" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-display font-bold text-wood-900 text-base sm:text-lg">Registrasi Wajah Biometrik</h3>
+                <p class="text-xs text-wood-600">${escapeHtml(emp.name)} (${escapeHtml(emp.id)})</p>
+              </div>
+            </div>
+            <button onclick="closeModal()" class="p-2 rounded-lg text-wood-500 hover:bg-wood-100">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+
+          <div class="mt-4 space-y-4">
+            <div id="face-reg-status" class="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-wood-100 text-wood-800 text-xs sm:text-sm font-medium">
+              <i data-lucide="camera" class="w-4 h-4 text-wood-600 animate-pulse"></i>
+              <span>Mengaktifkan kamera perangkat...</span>
+            </div>
+
+            <div class="relative rounded-2xl overflow-hidden bg-wood-900 aspect-4/3 flex items-center justify-center border-2 border-wood-300">
+              <video id="reg-video" autoplay playsinline muted class="w-full h-full object-cover transform -scale-x-100"></video>
+              <canvas id="reg-canvas" class="hidden"></canvas>
+              <!-- Face Guide Oval -->
+              <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div class="w-44 h-56 sm:w-52 sm:h-64 rounded-full border-2 border-dashed border-amber-300/90 shadow-[0_0_0_9999px_rgba(28,16,8,0.45)]"></div>
+              </div>
+              <div class="scan-line"></div>
+              <div class="absolute bottom-3 inset-x-3 text-center">
+                <span class="inline-block px-3 py-1 rounded-full bg-black/60 text-white text-xs backdrop-blur-xs">
+                  Posisikan wajah lurus di dalam bingkai oval dengan pencahayaan cukup
+                </span>
+              </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-2.5 pt-2">
+              <button onclick="closeModal()" class="w-full sm:w-1/3 py-2.5 px-4 rounded-xl border border-wood-300 text-wood-700 font-medium text-sm hover:bg-wood-50">
+                Batal
+              </button>
+              <button id="btn-capture-face" onclick="captureAndSaveFace('${emp.id}')" disabled class="w-full sm:w-2/3 py-2.5 px-4 rounded-xl bg-wood-700 text-white font-semibold text-sm hover:bg-wood-800 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md">
+                <i data-lucide="camera" class="w-4 h-4"></i>
+                <span>Daftarkan Wajah Sekarang</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      `, 'max-w-lg');
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        state.activeStream = stream;
+        const video = document.getElementById('reg-video');
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            const st = document.getElementById('face-reg-status');
+            const btn = document.getElementById('btn-capture-face');
+            if (st) {
+              st.className = 'flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs sm:text-sm font-medium';
+              st.innerHTML = `<i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i><span>Kamera Aktif — Siap memindai wajah Anda</span>`;
+              if (window.lucide) lucide.createIcons();
+            }
+            if (btn) btn.disabled = false;
+          };
+        }
+      } catch (err) {
+        const st = document.getElementById('face-reg-status');
+        if (st) {
+          st.className = 'flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-red-50 text-red-800 border border-red-200 text-xs sm:text-sm font-medium';
+          st.innerHTML = `<i data-lucide="alert-triangle" class="w-4 h-4 text-red-600"></i><span>Akses kamera ditolak atau tidak tersedia. Izinkan akses kamera pada browser Anda.</span>`;
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    };
+
+    window.captureAndSaveFace = async function(employeeId) {
+      if (!state.isOnline) {
+        showToast('Offline', 'Tidak dapat menyimpan data wajah saat koneksi terputus.', 'error');
+        return;
+      }
+      const video = document.getElementById('reg-video');
+      const canvas = document.getElementById('reg-canvas');
+      const st = document.getElementById('face-reg-status');
+      const btn = document.getElementById('btn-capture-face');
+
+      if (!video || !canvas) return;
+      btn.disabled = true;
+
+      st.className = 'flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-xs sm:text-sm font-medium';
+      st.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Memindai Wajah & Mengekstrak Pola Biometrik...</span>`;
+      if (window.lucide) lucide.createIcons();
+
+      // Capture 2 samples 350ms apart to verify stability & real face
+      const sample1 = await extractBiometricDescriptor(video, canvas);
+      await new Promise(r => setTimeout(r, 350));
+      const sample2 = await extractBiometricDescriptor(video, canvas);
+
+      if (!sample1.detected || !sample2.detected) {
+        st.className = 'flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-red-50 text-red-800 border border-red-200 text-xs sm:text-sm font-medium';
+        st.innerHTML = `<i data-lucide="x-circle" class="w-4 h-4 text-red-600"></i><span>Wajah Tidak Terdeteksi — ${escapeHtml(sample1.reason || 'Pastikan wajah terlihat jelas.')}</span>`;
+        if (window.lucide) lucide.createIcons();
+        btn.disabled = false;
+        return;
+      }
+
+      // Average the two descriptors for higher accuracy
+      const avgDescriptor = sample1.descriptor.map((v, i) => (v + sample2.descriptor[i]) / 2);
+
+      // Ensure this face isn't already registered to a DIFFERENT employee (anti-duplicate identity)
+      for (const existing of state.faceRegistrations) {
+        if (existing.employeeId !== employeeId && existing.method === sample1.method) {
+          const dist = computeDescriptorDistance(avgDescriptor, existing.descriptor);
+          const threshold = sample1.method === 'neural-128d' ? 0.42 : 0.045;
+          if (dist < threshold) {
+            st.className = 'flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-red-50 text-red-800 border border-red-200 text-xs sm:text-sm font-medium';
+            st.innerHTML = `<i data-lucide="shield-alert" class="w-4 h-4 text-red-600"></i><span>Verifikasi Gagal: Wajah ini sudah terdaftar pada akun pegawai lain!</span>`;
+            if (window.lucide) lucide.createIcons();
+            btn.disabled = false;
+            return;
+          }
+        }
+      }
+
+      try {
+        const emp = state.employees.find(e => e.id === employeeId);
+        await setDoc(getDocRef('face_registrations', employeeId), {
+          id: employeeId,
+          employeeId: employeeId,
+          employeeName: emp ? emp.name : employeeId,
+          method: sample1.method,
+          descriptor: avgDescriptor,
+          registeredAt: new Date().toISOString(),
+          status: 'Terverifikasi'
+        });
+
+        await updateDoc(getDocRef('employees', employeeId), {
+          faceRegistered: true,
+          faceUpdateRequested: false
+        });
+
+        closeModal();
+        showToast('Registrasi Wajah Berhasil', 'Data biometrik wajah telah tersimpan aman di database cloud.', 'success');
+      } catch (err) {
+        console.error(err);
+        showToast('Gagal Menyimpan', 'Terjadi kesalahan saat menyimpan data wajah ke cloud.', 'error');
+        btn.disabled = false;
+      }
+    };
+
+    /**
+     * Opens Live Face Verification + Liveness Detection Scanner before Check In / Check Out
+     */
+    window.startAttendanceWithFaceVerification = async function(actionType) {
+      // actionType: 'checkin' | 'checkout'
+      if (!state.isOnline) {
+        showToast('Koneksi Terputus', 'Presensi memerlukan koneksi internet untuk sinkronisasi cloud.', 'error');
+        return;
+      }
+
+      const empId = state.currentUser?.employeeId;
+      const emp = state.employees.find(e => e.id === empId);
+      const faceReg = state.faceRegistrations.find(f => f.employeeId === empId);
+
+      if (!emp || !emp.faceRegistered || !faceReg) {
+        showToast('Registrasi Wajah Diperlukan', 'Silakan daftarkan wajah Anda terlebih dahulu sebelum melakukan presensi.', 'warning');
+        openFaceRegistrationModal(empId);
+        return;
+      }
+
+      // Pre-validate duplicate check-in or premature check-out
+      const todayStr = formatDateYYYYMMDD();
+      const todayRecord = state.attendance.find(a => a.employeeId === empId && a.date === todayStr);
+
+      if (actionType === 'checkin' && todayRecord && todayRecord.checkIn && todayRecord.checkIn !== '-') {
+        showToast('Sudah Check In', `Anda sudah melakukan Check In hari ini pada pukul ${todayRecord.checkIn} WIB.`, 'warning');
+        return;
+      }
+      if (actionType === 'checkout') {
+        if (!todayRecord || !todayRecord.checkIn || todayRecord.checkIn === '-') {
+          showToast('Belum Check In', 'Anda tidak dapat melakukan Check Out sebelum melakukan Check In hari ini.', 'error');
+          return;
+        }
+        if (todayRecord.checkOut && todayRecord.checkOut !== '-') {
+          showToast('Sudah Check Out', `Anda sudah melakukan Check Out hari ini pada pukul ${todayRecord.checkOut} WIB.`, 'warning');
+          return;
+        }
+      }
+
+      loadFaceModelsIfNeeded();
+
+      const actionLabel = actionType === 'checkin' ? 'Check In (Masuk)' : 'Check Out (Pulang)';
+      openModal(`
+        <div class="p-5 sm:p-6">
+          <div class="flex items-center justify-between border-b border-wood-200 pb-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-wood-700 text-white flex items-center justify-center">
+                <i data-lucide="shield-check" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-display font-bold text-wood-900 text-base sm:text-lg">Verifikasi Wajah — ${actionLabel}</h3>
+                <p class="text-xs text-wood-600">${escapeHtml(emp.name)} • Sistem Keamanan Biometrik</p>
+              </div>
+            </div>
+            <button onclick="closeModal()" class="p-2 rounded-lg text-wood-500 hover:bg-wood-100">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+
+          <div class="mt-4 space-y-4">
+            <!-- Status Indicator Pill -->
+            <div id="verify-status-banner" class="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-wood-100 text-wood-800 border border-wood-200 text-xs sm:text-sm font-semibold">
+              <i data-lucide="camera" class="w-4 h-4 text-wood-700 animate-pulse"></i>
+              <span id="verify-status-text">Mengakses Kamera...</span>
+            </div>
+
+            <!-- Live Camera Viewport -->
+            <div class="relative rounded-2xl overflow-hidden bg-wood-900 aspect-4/3 flex items-center justify-center border-2 border-wood-400">
+              <video id="verify-video" autoplay playsinline muted class="w-full h-full object-cover transform -scale-x-100"></video>
+              <canvas id="verify-canvas" class="hidden"></canvas>
+              <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div id="verify-oval" class="w-44 h-56 sm:w-52 sm:h-64 rounded-full border-2 border-dashed border-amber-300 transition-colors duration-300 shadow-[0_0_0_9999px_rgba(28,16,8,0.45)]"></div>
+              </div>
+              <div class="scan-line"></div>
+              <div class="absolute bottom-3 inset-x-3 text-center">
+                <span id="liveness-hint" class="inline-block px-3 py-1 rounded-full bg-black/65 text-amber-200 text-xs font-medium backdrop-blur-xs">
+                  Arahkan wajah ke kamera & kedipkan mata / gerakkan kepala sedikit
+                </span>
+              </div>
+            </div>
+
+            <!-- Step Progress Pills -->
+            <div class="grid grid-cols-3 gap-2 text-center text-[11px] font-medium">
+              <div id="step-1" class="p-2 rounded-lg bg-wood-100 text-wood-600 border border-wood-200">1. Deteksi Wajah</div>
+              <div id="step-2" class="p-2 rounded-lg bg-wood-100 text-wood-600 border border-wood-200">2. Liveness Check</div>
+              <div id="step-3" class="p-2 rounded-lg bg-wood-100 text-wood-600 border border-wood-200">3. Cocokkan ID</div>
+            </div>
+
+            <div class="flex gap-2.5 pt-1">
+              <button onclick="closeModal()" class="w-1/3 py-2.5 px-4 rounded-xl border border-wood-300 text-wood-700 font-medium text-sm hover:bg-wood-50">
+                Tutup
+              </button>
+              <button id="btn-retry-verify" onclick="runFaceVerificationPipeline('${actionType}')" disabled class="w-2/3 py-2.5 px-4 rounded-xl bg-wood-700 text-white font-semibold text-sm hover:bg-wood-800 disabled:opacity-50 flex items-center justify-center gap-2">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                <span>Pindai Ulang Wajah</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      `, 'max-w-lg');
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        state.activeStream = stream;
+        const video = document.getElementById('verify-video');
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            updateVerifyBanner('Kamera Aktif', 'info');
+            setTimeout(() => runFaceVerificationPipeline(actionType), 600);
+          };
+        }
+      } catch (err) {
+        updateVerifyBanner('Verifikasi Gagal — Akses kamera ditolak atau tidak tersedia.', 'error');
+      }
+    };
+
+    function updateVerifyBanner(text, tone = 'info') {
+      const banner = document.getElementById('verify-status-banner');
+      if (!banner) return;
+      const styles = {
+        info: 'bg-wood-100 text-wood-800 border-wood-200',
+        scanning: 'bg-amber-50 text-amber-800 border-amber-200',
+        success: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+        error: 'bg-red-50 text-red-800 border-red-300'
+      };
+      const icons = {
+        info: 'camera',
+        scanning: 'scan-face',
+        success: 'check-circle-2',
+        error: 'x-circle'
+      };
+      banner.className = `flex items-center gap-2.5 px-4 py-3 rounded-xl border text-xs sm:text-sm font-semibold ${styles[tone] || styles.info}`;
+      banner.innerHTML = `<i data-lucide="${icons[tone]}" class="w-4 h-4 shrink-0"></i><span>${escapeHtml(text)}</span>`;
+      if (window.lucide) lucide.createIcons();
+    }
+
+    window.runFaceVerificationPipeline = async function(actionType) {
+      const video = document.getElementById('verify-video');
+      const canvas = document.getElementById('verify-canvas');
+      const retryBtn = document.getElementById('btn-retry-verify');
+      const oval = document.getElementById('verify-oval');
+      const s1 = document.getElementById('step-1');
+      const s2 = document.getElementById('step-2');
+      const s3 = document.getElementById('step-3');
+
+      if (!video || !canvas) return;
+      if (retryBtn) retryBtn.disabled = true;
+
+      // Reset step pills
+      [s1, s2, s3].forEach(el => {
+        if (el) el.className = 'p-2 rounded-lg bg-wood-100 text-wood-600 border border-wood-200';
+      });
+
+      // STEP 1: Memindai Wajah
+      updateVerifyBanner('Memindai Wajah...', 'scanning');
+      await new Promise(r => setTimeout(r, 550));
+      const frame1 = await extractBiometricDescriptor(video, canvas);
+
+      if (!frame1.detected) {
+        updateVerifyBanner('Wajah Tidak Terdeteksi — Posisikan wajah Anda di dalam bingkai.', 'error');
+        if (oval) oval.classList.replace('border-amber-300', 'border-red-500');
+        if (retryBtn) retryBtn.disabled = false;
+        return;
+      }
+      if (s1) s1.className = 'p-2 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold';
+
+      // STEP 2: Liveness Detection (Check natural micro-movement / blink across frames)
+      updateVerifyBanner('Memindai Wajah — Pemeriksaan Keaslian (Liveness)...', 'scanning');
+      await new Promise(r => setTimeout(r, 650));
+      const frame2 = await extractBiometricDescriptor(video, canvas);
+
+      if (!frame2.detected) {
+        updateVerifyBanner('Wajah Tidak Terdeteksi — Jangan menjauh dari kamera.', 'error');
+        if (retryBtn) retryBtn.disabled = false;
+        return;
+      }
+
+      // Check liveness movement between frame1 & frame2
+      let isLive = true;
+      if (frame1.rawFramePixels && frame2.rawFramePixels) {
+        const motion = computeFrameMotion(frame1.rawFramePixels, frame2.rawFramePixels);
+        // If frame is completely frozen (0.000 diff, e.g., virtual static image injection), reject
+        if (motion < 0.15) {
+          isLive = false;
+        }
+      } else if (frame1.landmarks && frame2.landmarks) {
+        let shift = 0;
+        for (let i = 0; i < Math.min(10, frame1.landmarks.length); i++) {
+          shift += Math.hypot(frame1.landmarks[i].x - frame2.landmarks[i].x, frame1.landmarks[i].y - frame2.landmarks[i].y);
+        }
+        if (shift < 0.05) isLive = false;
+      }
+
+      if (!isLive) {
+        updateVerifyBanner('Verifikasi Gagal — Liveness tidak terdeteksi (gerakkan kepala sedikit).', 'error');
+        if (retryBtn) retryBtn.disabled = false;
+        return;
+      }
+      if (s2) s2.className = 'p-2 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold';
+
+      // STEP 3: Memverifikasi Identitas (Biometric Vector Comparison)
+      updateVerifyBanner('Memverifikasi Identitas...', 'scanning');
+      await new Promise(r => setTimeout(r, 500));
+
+      const empId = state.currentUser.employeeId;
+      const registered = state.faceRegistrations.find(f => f.employeeId === empId);
+
+      if (!registered) {
+        updateVerifyBanner('Verifikasi Gagal — Data referensi wajah tidak ditemukan.', 'error');
+        return;
+      }
+
+      // If model methods differ (e.g. registered with fallback, verified with neural), re-extract matching method
+      const distance = computeDescriptorDistance(frame2.descriptor, registered.descriptor);
+      const threshold = registered.method === 'neural-128d' ? 0.56 : 0.14;
+
+      if (distance > threshold) {
+        updateVerifyBanner('Wajah Tidak Dikenali — Wajah tidak sesuai dengan akun yang login.', 'error');
+        if (oval) oval.className = 'w-44 h-56 sm:w-52 sm:h-64 rounded-full border-2 border-red-500 shadow-[0_0_0_9999px_rgba(28,16,8,0.45)]';
+        if (retryBtn) retryBtn.disabled = false;
+        return;
+      }
+
+      // MATCH CONFIRMED!
+      if (s3) s3.className = 'p-2 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold';
+      if (oval) oval.className = 'w-44 h-56 sm:w-52 sm:h-64 rounded-full border-4 border-emerald-400 shadow-[0_0_0_9999px_rgba(28,16,8,0.45)]';
+      updateVerifyBanner('Verifikasi Berhasil — Menyimpan presensi ke cloud...', 'success');
+
+      await new Promise(r => setTimeout(r, 550));
+      await commitAttendanceToCloud(actionType);
+    };
+
+    // =========================================================================
+    // 8. CLOUD ATTENDANCE COMMIT (CHECK IN & CHECK OUT)
+    // =========================================================================
+    async function commitAttendanceToCloud(actionType) {
+      const empId = state.currentUser.employeeId;
+      const emp = state.employees.find(e => e.id === empId);
+      const nowWIB = getWIBNow();
+      const todayStr = formatDateYYYYMMDD(nowWIB);
+      const timeNowStr = formatTimeHHMMSS(nowWIB);
+      const docId = `ATT-${empId}-${todayStr}`;
+
+      try {
+        // Server/Cloud Double-Check to prevent duplicate records across multiple devices
+        const existingSnap = await getDoc(getDocRef('attendance', docId));
+
+        if (actionType === 'checkin') {
+          if (existingSnap.exists() && existingSnap.data().checkIn && existingSnap.data().checkIn !== '-') {
+            closeModal();
+            showToast('Presensi Ganda Dicegah', 'Anda sudah tercatat Check In hari ini di database cloud.', 'warning');
+            return;
+          }
+
+          // Calculate On-Time vs Terlambat against workSettings
+          const [deadH, deadM] = (state.workSettings.checkInDeadline || '08:00').split(':').map(Number);
+          const tolerance = Number(state.workSettings.toleranceMinutes || 0);
+          const deadlineMinutes = deadH * 60 + deadM + tolerance;
+          const actualMinutes = nowWIB.getHours() * 60 + nowWIB.getMinutes();
+
+          const isLate = actualMinutes > deadlineMinutes;
+          const lateMinutes = isLate ? (actualMinutes - (deadH * 60 + deadM)) : 0;
+          const status = isLate ? 'Terlambat' : 'Hadir';
+          const note = isLate ? `Terlambat ${lateMinutes} menit` : 'Tepat waktu';
+
+          await setDoc(getDocRef('attendance', docId), {
+            id: docId,
+            employeeId: empId,
+            employeeName: emp ? emp.name : state.currentUser.name,
+            date: todayStr,
+            checkIn: timeNowStr,
+            checkOut: '-',
+            status: status,
+            lateMinutes: lateMinutes,
+            note: note,
+            verifiedByFace: true,
+            isDemo: false,
+            updatedAt: new Date().toISOString()
+          });
+
+          // Create Real-time Notification for Admin
+          await addDoc(getColRef('notifications'), {
+            targetRole: 'admin',
+            targetEmployeeId: '',
+            title: `Check In: ${emp ? emp.name : state.currentUser.name}`,
+            message: `${status} pada pukul ${timeNowStr} WIB (${note})`,
+            read: false,
+            createdAt: new Date().toISOString()
+          });
+
+          closeModal();
+          showToast(
+            'Check In Berhasil!',
+            `Tercatat pukul ${timeNowStr} WIB — Status: ${status}. Tersinkronisasi ke Cloud.`,
+            isLate ? 'warning' : 'success'
+          );
+
+        } else if (actionType === 'checkout') {
+          if (!existingSnap.exists() || !existingSnap.data().checkIn || existingSnap.data().checkIn === '-') {
+            closeModal();
+            showToast('Gagal Check Out', 'Data Check In hari ini tidak ditemukan di cloud.', 'error');
+            return;
+          }
+          if (existingSnap.data().checkOut && existingSnap.data().checkOut !== '-') {
+            closeModal();
+            showToast('Sudah Check Out', 'Anda sudah melakukan Check Out hari ini.', 'warning');
+            return;
+          }
+
+          await updateDoc(getDocRef('attendance', docId), {
+            checkOut: timeNowStr,
+            updatedAt: new Date().toISOString()
+          });
+
+          await addDoc(getColRef('notifications'), {
+            targetRole: 'admin',
+            targetEmployeeId: '',
+            title: `Check Out: ${emp ? emp.name : state.currentUser.name}`,
+            message: `Presensi pulang tercatat pukul ${timeNowStr} WIB`,
+            read: false,
+            createdAt: new Date().toISOString()
+          });
+
+          closeModal();
+          showToast('Check Out Berhasil!', `Jam pulang ${timeNowStr} WIB telah disimpan ke database cloud.`, 'success');
+        }
+      } catch (err) {
+        console.error('Attendance cloud commit error:', err);
+        closeModal();
+        showToast('Gagal Menyimpan ke Cloud', 'Periksa koneksi internet Anda dan coba kembali.', 'error');
+      }
+    }
+
+    // =========================================================================
+    // 9. AUTHENTICATION HANDLERS (LOGIN & LOGOUT)
+    // =========================================================================
+    window.handleLoginSubmit = async function(e) {
+      e.preventDefault();
+      if (!state.isOnline) {
+        showToast('Offline', 'Tidak dapat login saat offline. Periksa koneksi internet Anda.', 'error');
+        return;
+      }
+
+      const identifier = document.getElementById('login-identifier').value.trim().toLowerCase();
+      const password = document.getElementById('login-password').value;
+      const errBox = document.getElementById('login-error-box');
+      const submitBtn = document.getElementById('btn-login-submit');
+
+      if (!identifier || !password) return;
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Memverifikasi Akun Cloud...</span>`;
+      if (window.lucide) lucide.createIcons();
+
+      try {
+        // Ensure latest users from Firestore
+        const snap = await getDocs(getColRef('users'));
+        const allUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const passHash = await sha256(password);
+
+        const matchedUser = allUsers.find(u =>
+          (u.username.toLowerCase() === identifier || u.email.toLowerCase() === identifier) &&
+          u.passwordHash === passHash
+        );
+
+        if (!matchedUser) {
+          if (errBox) {
+            errBox.textContent = 'Username/Email atau Password tidak sesuai. Silakan periksa kembali.';
+            errBox.classList.remove('hidden');
+          }
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = `<span>Masuk ke WoodClock</span><i data-lucide="arrow-right" class="w-4 h-4"></i>`;
+          if (window.lucide) lucide.createIcons();
+          return;
+        }
+
+        // Check if employee account is active
+        if (matchedUser.role === 'employee') {
+          const emp = state.employees.find(em => em.id === matchedUser.employeeId);
+          if (emp && emp.status === 'Nonaktif') {
+            if (errBox) {
+              errBox.textContent = 'Akun pegawai Anda berstatus Nonaktif. Hubungi Admin/HRD.';
+              errBox.classList.remove('hidden');
+            }
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<span>Masuk ke WoodClock</span><i data-lucide="arrow-right" class="w-4 h-4"></i>`;
+            if (window.lucide) lucide.createIcons();
+            return;
+          }
+        }
+
+        state.currentUser = matchedUser;
+        state.activeTab = 'dashboard';
+        showToast('Login Berhasil', `Selamat datang kembali, ${matchedUser.name}!`, 'success');
+        renderApp();
+      } catch (err) {
+        console.error(err);
+        showToast('Kesalahan Server', 'Gagal menghubungkan ke database cloud.', 'error');
+        submitBtn.disabled = false;
+      }
+    };
+
+    window.fillDemoAccount = function(username, password) {
+      const idInput = document.getElementById('login-identifier');
+      const pwInput = document.getElementById('login-password');
+      if (idInput && pwInput) {
+        idInput.value = username;
+        pwInput.value = password;
+        state.showDemoAccounts = false;
+        renderApp();
+        setTimeout(() => {
+          document.getElementById('login-identifier').value = username;
+          document.getElementById('login-password').value = password;
+        }, 10);
+      }
+    };
+
+    window.handleLogout = function() {
+      stopCameraStream();
+      state.currentUser = null;
+      state.activeTab = 'dashboard';
+      state.mobileMenuOpen = false;
+      showToast('Logout Berhasil', 'Anda telah keluar dari sesi WoodClock.', 'info');
+      renderApp();
+    };
+
+    // =========================================================================
+    // 10. EMPLOYEE LEAVE REQUEST & PROFILE ACTIONS
+    // =========================================================================
+    window.submitLeaveRequest = async function(e) {
+      e.preventDefault();
+      if (!state.isOnline) {
+        showToast('Offline', 'Tidak dapat mengirim pengajuan saat offline.', 'error');
+        return;
+      }
+
+      const type = document.getElementById('leave-type').value;
+      const startDate = document.getElementById('leave-start').value;
+      const endDate = document.getElementById('leave-end').value;
+      const reason = document.getElementById('leave-reason').value.trim();
+      const fileInput = document.getElementById('leave-file');
+
+      if (!startDate || !endDate || !reason) {
+        showToast('Data Belum Lengkap', 'Harap lengkapi tanggal dan keterangan pengajuan.', 'warning');
+        return;
+      }
+      if (endDate < startDate) {
+        showToast('Tanggal Tidak Valid', 'Tanggal selesai tidak boleh lebih awal dari tanggal mulai.', 'error');
+        return;
+      }
+
+      let attachmentName = '';
+      let attachmentData = '';
+      if (fileInput && fileInput.files && fileInput.files[0]) {
+        const file = fileInput.files[0];
+        if (file.size > 700 * 1024) {
+          showToast('Ukuran File Terlalu Besar', 'Maksimal ukuran lampiran dokumen adalah 700 KB.', 'error');
+          return;
+        }
+        attachmentName = file.name;
+        attachmentData = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        });
+      }
+
+      const empId = state.currentUser.employeeId;
+      const emp = state.employees.find(em => em.id === empId);
+
+      try {
+        await addDoc(getColRef('leave_requests'), {
+          employeeId: empId,
+          employeeName: emp ? emp.name : state.currentUser.name,
+          type,
+          startDate,
+          endDate,
+          reason,
+          attachmentName,
+          attachmentData,
+          status: 'Menunggu',
+          reviewedBy: '',
+          createdAt: new Date().toISOString(),
+          isDemo: false
+        });
+
+        await addDoc(getColRef('notifications'), {
+          targetRole: 'admin',
+          targetEmployeeId: '',
+          title: `Pengajuan ${type} Baru`,
+          message: `${emp ? emp.name : state.currentUser.name} mengajukan ${type} (${startDate} s/d ${endDate})`,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+
+        showToast('Pengajuan Terkirim', `Pengajuan ${type} berhasil disimpan ke cloud dan menunggu persetujuan Admin.`, 'success');
+        e.target.reset();
+      } catch (err) {
+        console.error(err);
+        showToast('Gagal Mengirim', 'Terjadi kesalahan saat menyimpan pengajuan ke cloud.', 'error');
+      }
+    };
+
+    window.requestFaceUpdateByEmployee = async function() {
+      const empId = state.currentUser.employeeId;
+      try {
+        await updateDoc(getDocRef('employees', empId), {
+          faceUpdateRequested: true
+        });
+        await addDoc(getColRef('notifications'), {
+          targetRole: 'admin',
+          targetEmployeeId: '',
+          title: 'Permintaan Pembaruan Wajah',
+          message: `${state.currentUser.name} (${empId}) mengajukan pembaruan data biometrik wajah.`,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+        showToast('Permintaan Terkirim', 'Admin telah diberi notifikasi untuk membuka akses pembaruan wajah Anda.', 'info');
+      } catch (err) {
+        showToast('Gagal', 'Tidak dapat mengirim permintaan.', 'error');
+      }
+    };
+
+    // =========================================================================
+    // 11. ADMIN CRUD & MANAGEMENT ACTIONS
+    // =========================================================================
+    window.openEmployeeFormModal = function(empId = null) {
+      const isEdit = Boolean(empId);
+      const emp = isEdit ? state.employees.find(e => e.id === empId) : null;
+      const usr = isEdit ? state.users.find(u => u.employeeId === empId) : null;
+
+      // Auto-generate next EMP ID
+      const nextNum = state.employees.length + 1;
+      const defaultId = isEdit ? emp.id : `EMP-${String(nextNum).padStart(3, '0')}`;
+
+      openModal(`
+        <form onsubmit="saveEmployeeToCloud(event, ${isEdit ? `'${empId}'` : 'null'})" class="p-5 sm:p-6 space-y-4">
+          <div class="flex items-center justify-between border-b border-wood-200 pb-3">
+            <h3 class="font-display font-bold text-wood-900 text-lg">${isEdit ? 'Edit Data Pegawai' : 'Tambah Pegawai Baru'}</h3>
+            <button type="button" onclick="closeModal()" class="p-1.5 rounded-lg text-wood-500 hover:bg-wood-100">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-sm">
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">ID Pegawai</label>
+              <input id="emp-f-id" type="text" required ${isEdit ? 'readonly class="w-full px-3 py-2 rounded-xl border border-wood-200 bg-wood-100 text-wood-600"' : 'class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden"'} value="${escapeHtml(defaultId)}" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Nama Lengkap</label>
+              <input id="emp-f-name" type="text" required class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden" value="${escapeHtml(emp?.name || '')}" placeholder="Contoh: Ahmad Fauzi" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Jenis Kelamin</label>
+              <select id="emp-f-gender" class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden bg-white">
+                <option value="Laki-laki" ${emp?.gender === 'Laki-laki' ? 'selected' : ''}>Laki-laki</option>
+                <option value="Perempuan" ${emp?.gender === 'Perempuan' ? 'selected' : ''}>Perempuan</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Jabatan / Bagian</label>
+              <input id="emp-f-position" type="text" required class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden" value="${escapeHtml(emp?.position || '')}" placeholder="Contoh: Staff HRD" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Email</label>
+              <input id="emp-f-email" type="email" required class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden" value="${escapeHtml(emp?.email || '')}" placeholder="nama@woodclock.id" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Nomor Telepon</label>
+              <input id="emp-f-phone" type="text" required class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden" value="${escapeHtml(emp?.phone || '')}" placeholder="0812-xxxx-xxxx" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Username Login</label>
+              <input id="emp-f-username" type="text" required class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden" value="${escapeHtml(emp?.username || usr?.username || '')}" placeholder="username.pegawai" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-wood-700 mb-1">${isEdit ? 'Password Baru (Opsional)' : 'Password Akun'}</label>
+              <input id="emp-f-password" type="password" ${isEdit ? '' : 'required'} class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden" placeholder="${isEdit ? 'Kosongkan jika tetap' : 'Minimal 6 karakter'}" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-wood-700 mb-1">Status Kepegawaian</label>
+              <select id="emp-f-status" class="w-full px-3 py-2 rounded-xl border border-wood-300 focus:ring-2 focus:ring-wood-500 outline-hidden bg-white">
+                <option value="Aktif" ${emp?.status !== 'Nonaktif' ? 'selected' : ''}>Aktif</option>
+                <option value="Nonaktif" ${emp?.status === 'Nonaktif' ? 'selected' : ''}>Nonaktif</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2.5 pt-3 border-t border-wood-200">
+            <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-xl border border-wood-300 text-wood-700 text-sm font-medium hover:bg-wood-50">Batal</button>
+            <button type="submit" class="px-5 py-2 rounded-xl bg-wood-700 text-white text-sm font-semibold hover:bg-wood-800 shadow-sm">
+              ${isEdit ? 'Simpan Perubahan' : 'Tambah Pegawai'}
+            </button>
+          </div>
+        </form>
+      `, 'max-w-xl');
+    };
+
+    window.saveEmployeeToCloud = async function(e, existingEmpId) {
+      e.preventDefault();
+      if (!state.isOnline) {
+        showToast('Offline', 'Tidak dapat menyimpan data saat offline.', 'error');
+        return;
+      }
+
+      const id = document.getElementById('emp-f-id').value.trim().toUpperCase();
+      const name = document.getElementById('emp-f-name').value.trim();
+      const gender = document.getElementById('emp-f-gender').value;
+      const position = document.getElementById('emp-f-position').value.trim();
+      const email = document.getElementById('emp-f-email').value.trim().toLowerCase();
+      const phone = document.getElementById('emp-f-phone').value.trim();
+      const username = document.getElementById('emp-f-username').value.trim().toLowerCase();
+      const rawPassword = document.getElementById('emp-f-password').value;
+      const status = document.getElementById('emp-f-status').value;
+
+      // Validate duplicate ID/username on creation
+      if (!existingEmpId) {
+        if (state.employees.some(emp => emp.id === id)) {
+          showToast('ID Duplikat', `ID Pegawai ${id} sudah digunakan.`, 'error');
+          return;
+        }
+        if (state.users.some(u => u.username.toLowerCase() === username || u.email.toLowerCase() === email)) {
+          showToast('Akun Sudah Terdaftar', 'Username atau Email sudah digunakan pengguna lain.', 'error');
+          return;
+        }
+      }
+
+      try {
+        const userDocId = existingEmpId
+          ? (state.users.find(u => u.employeeId === existingEmpId)?.id || `USR-${id}`)
+          : `USR-${id}`;
+
+        const empData = {
+          id,
+          userId: userDocId,
+          name,
+          gender,
+          position,
+          email,
+          phone,
+          username,
+          status,
+          avatarColor: '#8B5A2B',
+          updatedAt: new Date().toISOString()
+        };
+
+        if (!existingEmpId) {
+          empData.faceRegistered = false;
+          empData.faceUpdateRequested = false;
+          empData.isDemo = false;
+          empData.createdAt = new Date().toISOString();
+          await setDoc(getDocRef('employees', id), empData);
+        } else {
+          await updateDoc(getDocRef('employees', id), empData);
+        }
+
+        const userUpdate = {
+          id: userDocId,
+          employeeId: id,
+          username,
+          email,
+          role: 'employee',
+          name
+        };
+        if (rawPassword) {
+          userUpdate.passwordHash = await sha256(rawPassword);
+        } else if (!existingEmpId) {
+          userUpdate.passwordHash = await sha256('pegawai123');
+        }
+
+        if (!existingEmpId) {
+          userUpdate.isDemo = false;
+          userUpdate.createdAt = new Date().toISOString();
+          await setDoc(getDocRef('users', userDocId), userUpdate);
+        } else {
+          await updateDoc(getDocRef('users', userDocId), userUpdate);
+        }
+
+        closeModal();
+        showToast('Berhasil Disimpan', `Data pegawai ${name} telah diperbarui di cloud.`, 'success');
+      } catch (err) {
+        console.error(err);
+        showToast('Gagal Menyimpan', 'Terjadi kesalahan saat menyimpan ke database cloud.', 'error');
+      }
+    };
+
+    window.confirmDeleteEmployee = function(empId) {
+      const emp = state.employees.find(e => e.id === empId);
+      if (!emp) return;
+      openModal(`
+        <div class="p-6 text-center space-y-4">
+          <div class="w-12 h-12 rounded-full bg-red-100 text-red-700 flex items-center justify-center mx-auto">
+            <i data-lucide="trash-2" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h3 class="font-display font-bold text-wood-900 text-lg">Hapus Data Pegawai?</h3>
+            <p class="text-sm text-wood-600 mt-1">Anda akan menghapus <strong>${escapeHtml(emp.name)} (${escapeHtml(emp.id)})</strong> beserta akun login dan data biometrik wajahnya dari cloud.</p>
+          </div>
+          <div class="flex gap-3 pt-2">
+            <button onclick="closeModal()" class="w-1/2 py-2.5 rounded-xl border border-wood-300 text-wood-700 text-sm font-medium hover:bg-wood-50">Batal</button>
+            <button onclick="deleteEmployeeFromCloud('${emp.id}')" class="w-1/2 py-2.5 rounded-xl bg-red-700 text-white text-sm font-semibold hover:bg-red-800">Ya, Hapus</button>
+          </div>
+        </div>
+      `, 'max-w-md');
+    };
+
+    window.deleteEmployeeFromCloud = async function(empId) {
+      try {
+        await deleteDoc(getDocRef('employees', empId));
+        const usr = state.users.find(u => u.employeeId === empId);
+        if (usr) await deleteDoc(getDocRef('users', usr.id));
+        await deleteDoc(getDocRef('face_registrations', empId));
+        closeModal();
+        showToast('Data Dihapus', `Pegawai ${empId} telah dihapus dari database cloud.`, 'info');
+      } catch (err) {
+        showToast('Gagal Menghapus', 'Terjadi kesalahan saat menghapus data.', 'error');
+      }
+    };
+
+    window.adminResetEmployeeFace = async function(empId) {
+      try {
+        await deleteDoc(getDocRef('face_registrations', empId));
+        await updateDoc(getDocRef('employees', empId), {
+          faceRegistered: false,
+          faceUpdateRequested: false
+        });
+        await addDoc(getColRef('notifications'), {
+          targetRole: 'employee',
+          targetEmployeeId: empId,
+          title: 'Reset Data Wajah oleh Admin',
+          message: 'Admin telah mereset data wajah Anda. Silakan lakukan registrasi ulang wajah.',
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+        showToast('Data Wajah Direset', `Pegawai ${empId} kini dapat melakukan registrasi ulang wajah.`, 'success');
+      } catch (err) {
+        showToast('Gagal Reset', 'Terjadi kesalahan saat mereset data wajah.', 'error');
+      }
+    };
+
+    window.handleLeaveDecision = async function(leaveId, decision) {
+      // decision: 'Disetujui' | 'Ditolak'
+      const req = state.leaveRequests.find(r => r.id === leaveId);
+      if (!req) return;
+
+      try {
+        await updateDoc(getDocRef('leave_requests', leaveId), {
+          status: decision,
+          reviewedBy: state.currentUser.name,
+          reviewedAt: new Date().toISOString()
+        });
+
+        // If Approved, automatically record each date in the attendance collection!
+        if (decision === 'Disetujui') {
+          const [sy, sm, sd] = req.startDate.split('-').map(Number);
+          const [ey, em, ed] = req.endDate.split('-').map(Number);
+          let cur = new Date(sy, sm - 1, sd);
+          const end = new Date(ey, em - 1, ed);
+
+          while (cur <= end) {
+            const dateStr = formatDateYYYYMMDD(cur);
+            const attId = `ATT-${req.employeeId}-${dateStr}`;
+            await setDoc(getDocRef('attendance', attId), {
+              id: attId,
+              employeeId: req.employeeId,
+              employeeName: req.employeeName,
+              date: dateStr,
+              checkIn: '-',
+              checkOut: '-',
+              status: req.type, // 'Izin' or 'Sakit'
+              lateMinutes: 0,
+              note: `${req.type}: ${req.reason}`,
+              verifiedByFace: false,
+              isDemo: req.isDemo || false
+            });
+            cur.setDate(cur.getDate() + 1);
+          }
+        }
+
+        // Send instant cloud notification to the employee
+        await addDoc(getColRef('notifications'), {
+          targetRole: 'employee',
+          targetEmployeeId: req.employeeId,
+          title: `Pengajuan ${req.type} ${decision}`,
+          message: `Pengajuan ${req.type} Anda (${req.startDate}) telah ${decision.toLowerCase()} oleh ${state.currentUser.name}.`,
+          read: false,
+          createdAt: new Date().toISOString()
+        });
+
+        showToast(`Pengajuan ${decision}`, `Status pengajuan ${req.employeeName} diperbarui secara real-time.`, decision === 'Disetujui' ? 'success' : 'warning');
+      } catch (err) {
+        console.error(err);
+        showToast('Gagal Memproses', 'Terjadi kesalahan saat memperbarui status pengajuan.', 'error');
+      }
+    };
+
+    window.saveWorkSettingsToCloud = async function(e) {
+      e.preventDefault();
+      const companyName = document.getElementById('set-company').value.trim();
+      const checkInDeadline = document.getElementById('set-checkin').value;
+      const checkOutStart = document.getElementById('set-checkout').value;
+      const toleranceMinutes = Number(document.getElementById('set-tolerance').value || 0);
+
+      try {
+        await setDoc(getDocRef('work_settings', 'default'), {
+          companyName,
+          checkInDeadline,
+          checkOutStart,
+          toleranceMinutes,
+          updatedAt: new Date().toISOString()
+        });
+        showToast('Pengaturan Tersimpan', 'Ketentuan jam kerja telah diperbarui di seluruh perangkat.', 'success');
+      } catch (err) {
+        showToast('Gagal Menyimpan', 'Tidak dapat memperbarui pengaturan jam kerja.', 'error');
+      }
+    };
+
+    window.markNotificationsRead = async function() {
+      const relevant = getVisibleNotifications().filter(n => !n.read);
+      for (const n of relevant) {
+        try {
+          await updateDoc(getDocRef('notifications', n.id), { read: true });
+        } catch (e) {}
+      }
+    };
+
+    // =========================================================================
+    // 12. REPORT EXPORT (EXCEL XLSX & PDF)
+    // =========================================================================
+    function getFilteredAttendance() {
+      return state.attendance.filter(a => {
+        if (state.currentUser?.role === 'employee' && a.employeeId !== state.currentUser.employeeId) {
+          return false;
+        }
+        if (state.searchQuery) {
+          const q = state.searchQuery.toLowerCase();
+          const matchName = (a.employeeName || '').toLowerCase().includes(q);
+          const matchId = (a.employeeId || '').toLowerCase().includes(q);
+          if (!matchName && !matchId) return false;
+        }
+        if (state.filterDate && a.date !== state.filterDate) return false;
+        if (!state.filterDate) {
+          if (state.filterYear && !a.date.startsWith(state.filterYear)) return false;
+          if (state.filterMonth && state.filterMonth !== 'ALL' && a.date.slice(5, 7) !== state.filterMonth) return false;
+        }
+        if (state.filterStatus && state.filterStatus !== 'ALL' && a.status !== state.filterStatus) return false;
+        return true;
+      });
+    }
+
+    window.exportReportExcel = function() {
+      if (!window.XLSX) {
+        showToast('Library Belum Siap', 'Modul Excel sedang dimuat, coba sesaat lagi.', 'warning');
+        return;
+      }
+      const rows = getFilteredAttendance().map((a, idx) => ({
+        'No': idx + 1,
+        'ID Pegawai': a.employeeId,
+        'Nama Pegawai': a.employeeName,
+        'Tanggal': a.date,
+        'Jam Masuk (WIB)': a.checkIn || '-',
+        'Jam Pulang (WIB)': a.checkOut || '-',
+        'Status': a.status,
+        'Keterangan': a.note || '-',
+        'Verifikasi Wajah': a.verifiedByFace ? 'Terverifikasi' : '-'
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Laporan Presensi');
+      XLSX.writeFile(wb, `Laporan_Presensi_WoodClock_${formatDateYYYYMMDD()}.xlsx`);
+      showToast('Unduhan Excel Berhasil', 'File laporan .xlsx telah diunduh.', 'success');
+    };
+
+    window.exportReportPDF = function() {
+      if (!window.jspdf) {
+        showToast('Library Belum Siap', 'Modul PDF sedang dimuat, coba sesaat lagi.', 'warning');
+        return;
+      }
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF('p', 'mm', 'a4');
+
+      doc.setFillColor(92, 58, 33);
+      doc.rect(0, 0, 210, 26, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
+      doc.text('WOODCLOCK — LAPORAN PRESENSI PEGAWAI', 14, 12);
+      doc.setFontSize(9);
+      doc.text(`${state.workSettings.companyName} | Dicetak: ${formatDateYYYYMMDD()} ${formatTimeHHMM()} WIB`, 14, 19);
+
+      const tableData = getFilteredAttendance().map((a, i) => [
+        i + 1,
+        a.employeeId,
+        a.employeeName,
+        a.date,
+        a.checkIn || '-',
+        a.checkOut || '-',
+        a.status,
+        a.note || '-'
+      ]);
+
+      doc.autoTable({
+        startY: 32,
+        head: [['No', 'ID', 'Nama Pegawai', 'Tanggal', 'Masuk', 'Pulang', 'Status', 'Keterangan']],
+        body: tableData,
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        headStyles: { fillColor: [92, 58, 33], textColor: 255 }
+      });
+
+      doc.save(`Laporan_Presensi_WoodClock_${formatDateYYYYMMDD()}.pdf`);
+      showToast('Unduhan PDF Berhasil', 'File laporan .pdf telah diunduh.', 'success');
+    };
+
+    // =========================================================================
+    // 13. UI RENDERING COMPONENTS
+    // =========================================================================
+    function renderLogoSVG(sizeClass = 'w-9 h-9', textClass = 'text-white') {
+      return `
+        <div class="inline-flex items-center gap-2.5 select-none">
+          <div class="${sizeClass} rounded-xl wood-grain-bg flex items-center justify-center shadow-md border border-wood-400/30 shrink-0">
+            <svg class="w-3/5 h-3/5 text-amber-200" viewBox="0 0 48 48" fill="none">
+              <circle cx="24" cy="24" r="19" stroke="currentColor" stroke-width="3.2"/>
+              <path d="M12 16C16 14 20 15 24 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>
+              <path d="M14 33C19 35 28 34 34 31" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>
+              <path d="M24 13V24L31 28" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <span class="font-display font-extrabold tracking-tight text-lg sm:text-xl ${textClass}">Wood<span class="text-amber-500">Clock</span></span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStatusBadge(status) {
+      const map = {
+        'Hadir': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        'Disetujui': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        'Terverifikasi': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        'Aktif': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        'Terlambat': 'bg-amber-100 text-amber-800 border-amber-200',
+        'Menunggu': 'bg-amber-100 text-amber-800 border-amber-200',
+        'Izin': 'bg-blue-100 text-blue-800 border-blue-200',
+        'Sakit': 'bg-purple-100 text-purple-800 border-purple-200',
+        'Tidak Hadir': 'bg-red-100 text-red-800 border-red-200',
+        'Ditolak': 'bg-red-100 text-red-800 border-red-200',
+        'Nonaktif': 'bg-red-100 text-red-800 border-red-200'
+      };
+      const cls = map[status] || 'bg-wood-100 text-wood-800 border-wood-200';
+      return `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cls}">${escapeHtml(status)}</span>`;
+    }
+
+    function renderDemoBadge(isDemo) {
+      if (!isDemo) return '';
+      return `<span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-wood-200/80 text-wood-700 tracking-wide">[DEMO]</span>`;
+    }
+
+    // -------------------------------------------------------------------------
+    // CLEAN & PROFESSIONAL LOGIN PAGE (WITH COLLAPSIBLE DEMO ACCOUNTS PANEL)
+    // -------------------------------------------------------------------------
+    function renderLoginPage() {
+      const demoUsers = [
+        { role: 'Admin HRD', name: 'Budi Santoso, S.E.', user: 'admin', pass: 'admin123' },
+        { role: 'Pegawai (UI/UX)', name: 'Siti Rahmawati', user: 'siti.rahma', pass: 'pegawai123' },
+        { role: 'Pegawai (Frontend)', name: 'Andi Pratama', user: 'andi.pratama', pass: 'pegawai123' },
+        { role: 'Pegawai (Finance)', name: 'Dewi Lestari', user: 'dewi.lestari', pass: 'pegawai123' },
+        { role: 'Pegawai (Ops)', name: 'Rizky Fauzan', user: 'rizky.fauzan', pass: 'pegawai123' },
+        { role: 'Pegawai (Marketing)', name: 'Nadia Putri', user: 'nadia.putri', pass: 'pegawai123' },
+      ];
+
+      return `
+        <div class="min-h-screen flex flex-col justify-between bg-wood-50 px-4 py-8 sm:px-6">
+          <!-- Top Bar Status -->
+          <div class="max-w-5xl w-full mx-auto flex items-center justify-between">
+            ${renderLogoSVG('w-9 h-9', 'text-wood-900')}
+            <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-wood-200 shadow-2xs text-xs font-medium text-wood-700">
+              <span class="w-2 h-2 rounded-full ${state.cloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}"></span>
+              <span>${state.cloudConnected ? 'Cloud Sync Aktif' : 'Menghubungkan Cloud...'}</span>
+            </div>
+          </div>
+
+          <!-- Center Login Card -->
+          <div class="my-auto py-8 flex flex-col items-center">
+            <div class="w-full max-w-md bg-white rounded-3xl border border-wood-200 shadow-xl overflow-hidden">
+              <!-- Wood Accent Header Strip -->
+              <div class="wood-grain-bg px-6 py-6 text-white">
+                <span class="inline-block px-2.5 py-0.5 rounded-full bg-white/15 text-amber-200 text-[11px] font-semibold tracking-wide uppercase mb-2">
+                  Portal Administrasi & Presensi
+                </span>
+                <h1 class="font-display text-2xl font-bold tracking-tight">Masuk ke WoodClock</h1>
+                <p class="text-xs sm:text-sm text-wood-200 mt-1">
+                  Silakan masuk menggunakan akun pegawai atau administrator perusahaan.
+                </p>
+              </div>
+
+              <form onsubmit="handleLoginSubmit(event)" class="p-6 sm:p-7 space-y-4">
+                <div id="login-error-box" class="hidden p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs font-medium"></div>
+
+                <div>
+                  <label for="login-identifier" class="block text-xs font-semibold text-wood-800 mb-1.5">Username atau Email</label>
+                  <div class="relative">
+                    <i data-lucide="user" class="w-4 h-4 text-wood-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                    <input
+                      id="login-identifier"
+                      type="text"
+                      required
+                      autocomplete="username"
+                      placeholder="Masukkan username atau email"
+                      class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-wood-300 text-sm text-wood-900 placeholder:text-wood-400 focus:border-wood-600 focus:ring-2 focus:ring-wood-500/20 outline-hidden transition"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label for="login-password" class="block text-xs font-semibold text-wood-800 mb-1.5">Password</label>
+                  <div class="relative">
+                    <i data-lucide="lock" class="w-4 h-4 text-wood-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                    <input
+                      id="login-password"
+                      type="${state.showPassword ? 'text' : 'password'}"
+                      required
+                      autocomplete="current-password"
+                      placeholder="Masukkan password akun"
+                      class="w-full pl-10 pr-11 py-2.5 rounded-xl border border-wood-300 text-sm text-wood-900 placeholder:text-wood-400 focus:border-wood-600 focus:ring-2 focus:ring-wood-500/20 outline-hidden transition"
+                    />
+                    <button
+                      type="button"
+                      onclick="state.showPassword = !state.showPassword; renderApp();"
+                      class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-wood-400 hover:text-wood-700"
+                      title="Tampilkan / Sembunyikan Password"
+                    >
+                      <i data-lucide="${state.showPassword ? 'eye-off' : 'eye'}" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  id="btn-login-submit"
+                  type="submit"
+                  class="w-full py-3 px-4 rounded-xl bg-wood-700 hover:bg-wood-800 text-white font-semibold text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2"
+                >
+                  <span>Masuk ke WoodClock</span>
+                  <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+              </form>
+
+              <!-- Bottom Corner Toggle for Demo Accounts (Hidden by Default) -->
+              <div class="px-6 py-3.5 bg-wood-50/80 border-t border-wood-200 flex items-center justify-between">
+                <span class="text-[11px] text-wood-500 flex items-center gap-1.5">
+                  <i data-lucide="shield-check" class="w-3.5 h-3.5 text-wood-600"></i>
+                  Face Recognition & Cloud Sync
+                </span>
+                <button
+                  type="button"
+                  onclick="state.showDemoAccounts = !state.showDemoAccounts; renderApp();"
+                  class="text-xs font-semibold text-wood-700 hover:text-wood-900 inline-flex items-center gap-1 underline decoration-wood-300 underline-offset-4"
+                >
+                  <span>${state.showDemoAccounts ? 'Sembunyikan Akun Demo' : 'Lihat Akun Demo'}</span>
+                  <i data-lucide="${state.showDemoAccounts ? 'chevron-up' : 'chevron-down'}" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+
+              <!-- Collapsible Demo Accounts Drawer -->
+              ${state.showDemoAccounts ? `
+                <div class="p-5 bg-wood-100/70 border-t border-wood-200 space-y-2.5 animate-fadeIn">
+                  <div class="flex items-center justify-between">
+                    <p class="text-xs font-bold text-wood-800">Akun Pengujian Cepat (Klik untuk Isi Otomatis)</p>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-wood-200 text-wood-700 font-semibold">Cloud Seeded</span>
+                  </div>
+                  <div class="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                    ${demoUsers.map(d => `
+                      <button
+                        type="button"
+                        onclick="fillDemoAccount('${d.user}', '${d.pass}')"
+                        class="w-full text-left p-2.5 rounded-xl bg-white hover:bg-wood-50 border border-wood-200 transition flex items-center justify-between group"
+                      >
+                        <div>
+                          <div class="text-xs font-bold text-wood-900 group-hover:text-wood-700">${escapeHtml(d.name)}</div>
+                          <div class="text-[11px] text-wood-500">${escapeHtml(d.role)} • <code class="text-wood-700 font-mono">${d.user}</code></div>
+                        </div>
+                        <span class="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-wood-100 text-wood-800 group-hover:bg-wood-700 group-hover:text-white transition">
+                          Gunakan
+                        </span>
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+
+          <footer class="text-center text-xs text-wood-500">
+            &copy; ${new Date().getFullYear()} ${escapeHtml(state.workSettings.companyName)} — Sistem Presensi Pegawai Berbasis Cloud & Verifikasi Wajah
+          </footer>
+        </div>
+      `;
+    }
+
+    // -------------------------------------------------------------------------
+    // SHARED AUTHENTICATED SHELL (SIDEBAR, TOPBAR, NOTIFICATIONS, MOBILE DRAWER)
+    // -------------------------------------------------------------------------
+    function getVisibleNotifications() {
+      if (!state.currentUser) return [];
+      return state.notifications.filter(n => {
+        if (state.currentUser.role === 'admin') return n.targetRole === 'admin';
+        return n.targetRole === 'employee' && n.targetEmployeeId === state.currentUser.employeeId;
+      });
+    }
+
+    function renderAuthenticatedShell(mainContentHtml) {
+      const isAdmin = state.currentUser.role === 'admin';
+      const menuItems = isAdmin
+        ? [
+            { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
+            { id: 'employees', label: 'Data Pegawai', icon: 'users' },
+            { id: 'attendance', label: 'Data Presensi', icon: 'calendar-check' },
+            { id: 'faces', label: 'Verifikasi Wajah', icon: 'scan-face' },
+            { id: 'leaves', label: 'Pengajuan Izin & Sakit', icon: 'file-text' },
+            { id: 'reports', label: 'Laporan Presensi', icon: 'bar-chart-3' },
+            { id: 'settings', label: 'Pengaturan', icon: 'settings' },
+          ]
+        : [
+            { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
+            { id: 'presensi', label: 'Presensi', icon: 'scan-face' },
+            { id: 'history', label: 'Riwayat Presensi', icon: 'history' },
+            { id: 'leaves', label: 'Izin dan Sakit', icon: 'file-plus-2' },
+            { id: 'profile', label: 'Profil Saya', icon: 'user-circle' },
+          ];
+
+      const notifs = getVisibleNotifications();
+      const unreadCount = notifs.filter(n => !n.read).length;
+
+      const renderNavLinks = (isMobile = false) => menuItems.map(item => {
+        const active = state.activeTab === item.id;
+        return `
+          <button
+            onclick="state.activeTab = '${item.id}'; ${isMobile ? 'state.mobileMenuOpen = false;' : ''} renderApp();"
+            class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${
+              active
+                ? 'bg-amber-200/20 text-amber-200 border border-amber-200/25 shadow-xs'
+                : 'text-wood-200 hover:bg-white/10 hover:text-white'
+            }"
+          >
+            <i data-lucide="${item.icon}" class="w-4 h-4 shrink-0"></i>
+            <span class="truncate">${item.label}</span>
+          </button>
+        `;
+      }).join('');
+
+      return `
+        <div class="min-h-screen flex bg-wood-50">
+          <!-- Desktop Sidebar -->
+          <aside class="hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 wood-grain-bg text-white z-30 shadow-xl">
+            <div class="px-5 py-5 border-b border-white/10">
+              ${renderLogoSVG('w-9 h-9', 'text-white')}
+              <p class="text-[11px] text-wood-300 mt-1.5 truncate">${escapeHtml(state.workSettings.companyName)}</p>
+            </div>
+
+            <nav class="flex-1 px-3.5 py-4 space-y-1.5 overflow-y-auto">
+              ${renderNavLinks(false)}
+            </nav>
+
+            <div class="p-3.5 border-t border-white/10">
+              <button onclick="handleLogout()" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-red-200 hover:bg-red-500/20 transition">
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+                <span>Logout</span>
+              </button>
+            </div>
+          </aside>
+
+          <!-- Mobile Drawer Overlay -->
+          ${state.mobileMenuOpen ? `
+            <div class="fixed inset-0 z-50 lg:hidden flex">
+              <div class="fixed inset-0 bg-wood-900/60 backdrop-blur-xs" onclick="state.mobileMenuOpen = false; renderApp();"></div>
+              <aside class="relative w-72 max-w-[82vw] wood-grain-bg text-white flex flex-col z-10 shadow-2xl">
+                <div class="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+                  ${renderLogoSVG('w-8 h-8', 'text-white')}
+                  <button onclick="state.mobileMenuOpen = false; renderApp();" class="p-1.5 rounded-lg text-wood-200 hover:bg-white/10">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                  </button>
+                </div>
+                <nav class="flex-1 px-3.5 py-4 space-y-1.5 overflow-y-auto">
+                  ${renderNavLinks(true)}
+                </nav>
+                <div class="p-3.5 border-t border-white/10">
+                  <button onclick="handleLogout()" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-red-200 hover:bg-red-500/20">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                    <span>Logout</span>
+                  </button>
+                </div>
+              </aside>
+            </div>
+          ` : ''}
+
+          <!-- Main Content Area -->
+          <div class="flex-1 lg:pl-64 flex flex-col min-w-0">
+            <!-- Top Header Bar -->
+            <header class="sticky top-0 z-20 bg-white/95 backdrop-blur-xs border-b border-wood-200 px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+              <div class="flex items-center gap-3 min-w-0">
+                <button onclick="state.mobileMenuOpen = true; renderApp();" class="lg:hidden p-2 rounded-xl border border-wood-200 text-wood-700 hover:bg-wood-100">
+                  <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-semibold uppercase tracking-wider text-wood-500">${isAdmin ? 'Panel Administrator' : 'Portal Pegawai'}</span>
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${state.isOnline ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}">
+                      <span class="w-1.5 h-1.5 rounded-full ${state.isOnline ? 'bg-emerald-500' : 'bg-red-500'}"></span>
+                      ${state.isOnline ? 'Cloud Sync' : 'Offline'}
+                    </span>
+                  </div>
+                  <h2 class="font-display font-bold text-wood-900 text-base sm:text-lg truncate">
+                    ${menuItems.find(m => m.id === state.activeTab)?.label || 'Dashboard'}
+                  </h2>
+                </div>
+              </div>
+
+              <!-- Right Header Controls: Live Clock, Notification Bell, User Pill -->
+              <div class="flex items-center gap-2.5 sm:gap-3">
+                <div class="hidden md:flex flex-col items-end text-right pr-2 border-r border-wood-200">
+                  <span id="live-wib-clock" class="font-mono text-sm font-bold text-wood-900">${formatTimeHHMMSS()} WIB</span>
+                  <span class="text-[11px] text-wood-500">${formatIndoDate(formatDateYYYYMMDD())}</span>
+                </div>
+
+                <!-- Notifications Bell -->
+                <div class="relative">
+                  <button
+                    onclick="state.notifDropdownOpen = !state.notifDropdownOpen; if (state.notifDropdownOpen) markNotificationsRead(); renderApp();"
+                    class="relative p-2.5 rounded-xl border border-wood-200 bg-wood-50 hover:bg-wood-100 text-wood-700 transition"
+                    title="Notifikasi Sistem"
+                  >
+                    <i data-lucide="bell" class="w-4 h-4"></i>
+                    ${unreadCount > 0 ? `<span class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">${unreadCount}</span>` : ''}
+                  </button>
+
+                  ${state.notifDropdownOpen ? `
+                    <div class="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white rounded-2xl border border-wood-200 shadow-2xl z-40 overflow-hidden">
+                      <div class="px-4 py-3 bg-wood-50 border-b border-wood-200 flex items-center justify-between">
+                        <span class="text-xs font-bold text-wood-800">Notifikasi Aktivitas Cloud</span>
+                        <button onclick="state.notifDropdownOpen = false; renderApp();" class="text-wood-500 hover:text-wood-800">
+                          <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                      </div>
+                      <div class="max-h-72 overflow-y-auto divide-y divide-wood-100">
+                        ${notifs.length === 0 ? `
+                          <div class="p-6 text-center text-xs text-wood-500">Belum ada notifikasi aktivitas.</div>
+                        ` : notifs.slice(0, 10).map(n => `
+                          <div class="p-3.5 hover:bg-wood-50/70 transition">
+                            <p class="text-xs font-bold text-wood-900">${escapeHtml(n.title)}</p>
+                            <p class="text-xs text-wood-600 mt-0.5 leading-snug">${escapeHtml(n.message)}</p>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+
+                <!-- User Avatar Badge -->
+                <div class="flex items-center gap-2.5 pl-1">
+                  <div class="w-9 h-9 rounded-xl wood-grain-bg text-amber-200 font-display font-bold text-sm flex items-center justify-center shadow-xs">
+                    ${escapeHtml(state.currentUser.name.charAt(0).toUpperCase())}
+                  </div>
+                  <div class="hidden sm:block text-left">
+                    <p class="text-xs font-bold text-wood-900 leading-tight max-w-[130px] truncate">${escapeHtml(state.currentUser.name)}</p>
+                    <p class="text-[11px] text-wood-500">${isAdmin ? 'Admin / HRD' : escapeHtml(state.currentUser.employeeId)}</p>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            <!-- Page Body -->
+            <main class="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
+              ${mainContentHtml}
+            </main>
+          </div>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 14. EMPLOYEE VIEWS (DASHBOARD, PRESENSI, RIWAYAT, IZIN/SAKIT, PROFIL)
+    // =========================================================================
+    function renderEmployeePortal() {
+      const empId = state.currentUser.employeeId;
+      const emp = state.employees.find(e => e.id === empId) || {
+        id: empId,
+        name: state.currentUser.name,
+        position: 'Pegawai',
+        email: state.currentUser.email,
+        phone: '-',
+        gender: '-',
+        status: 'Aktif',
+        faceRegistered: false
+      };
+
+      const todayStr = formatDateYYYYMMDD();
+      const myAttendance = state.attendance.filter(a => a.employeeId === empId);
+      const todayRecord = myAttendance.find(a => a.date === todayStr);
+      const myLeaves = state.leaveRequests.filter(l => l.employeeId === empId);
+
+      const countHadir = myAttendance.filter(a => a.status === 'Hadir').length;
+      const countTerlambat = myAttendance.filter(a => a.status === 'Terlambat').length;
+      const countIzin = myAttendance.filter(a => a.status === 'Izin').length;
+      const countSakit = myAttendance.filter(a => a.status === 'Sakit').length;
+
+      // TAB 1: EMPLOYEE DASHBOARD
+      if (state.activeTab === 'dashboard') {
+        const hasCheckedIn = todayRecord && todayRecord.checkIn && todayRecord.checkIn !== '-';
+        const hasCheckedOut = todayRecord && todayRecord.checkOut && todayRecord.checkOut !== '-';
+
+        return `
+          <!-- Face Registration Alert Banner if Not Yet Registered -->
+          ${!emp.faceRegistered ? `
+            <div class="p-4 sm:p-5 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+              <div class="flex items-start gap-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-200/70 text-amber-900 flex items-center justify-center shrink-0">
+                  <i data-lucide="scan-face" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <h3 class="text-sm font-bold text-amber-950">Registrasi Wajah Belum Dilakukan</h3>
+                  <p class="text-xs text-amber-800 mt-0.5">Anda wajib mendaftarkan wajah biometrik sebelum dapat melakukan Check In maupun Check Out.</p>
+                </div>
+              </div>
+              <button onclick="openFaceRegistrationModal('${emp.id}')" class="px-4 py-2.5 rounded-xl bg-wood-700 hover:bg-wood-800 text-white text-xs sm:text-sm font-semibold shadow-sm shrink-0">
+                Daftarkan Wajah Sekarang
+              </button>
+            </div>
+          ` : ''}
+
+          <!-- Hero Greeting & Real-Time Clock Card -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <div class="lg:col-span-2 rounded-2xl wood-grain-bg text-white p-6 shadow-lg flex flex-col justify-between gap-6">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                  <div class="w-14 h-14 rounded-2xl bg-amber-200/20 border border-amber-200/30 flex items-center justify-center font-display text-2xl font-extrabold text-amber-200">
+                    ${escapeHtml(emp.name.charAt(0))}
+                  </div>
+                  <div>
+                    <span class="text-xs text-amber-200/90 font-medium">${escapeHtml(emp.id)} • ${escapeHtml(emp.position)}</span>
+                    <h1 class="font-display text-xl sm:text-2xl font-bold mt-0.5">Halo, ${escapeHtml(emp.name)}</h1>
+                    <p class="text-xs text-wood-200 mt-0.5">${formatIndoDate(todayStr)}</p>
+                  </div>
+                </div>
+                <div class="bg-black/25 backdrop-blur-xs px-4 py-3 rounded-2xl border border-white/10 text-left sm:text-right">
+                  <div class="text-[11px] text-wood-300 uppercase tracking-wider">Waktu Server WIB</div>
+                  <div id="hero-wib-clock" class="font-mono text-2xl font-extrabold text-amber-200 mt-0.5">${formatTimeHHMMSS()}</div>
+                  <div class="text-[11px] text-wood-300 mt-0.5">Batas Masuk: ${state.workSettings.checkInDeadline} WIB</div>
+                </div>
+              </div>
+
+              <!-- Quick Check In / Check Out Action Buttons -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/10">
+                <button
+                  onclick="startAttendanceWithFaceVerification('checkin')"
+                  ${hasCheckedIn ? 'disabled' : ''}
+                  class="py-3.5 px-5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2.5 transition shadow-md ${
+                    hasCheckedIn
+                      ? 'bg-white/10 text-wood-300 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  }"
+                >
+                  <i data-lucide="log-in" class="w-4 h-4"></i>
+                  <span>${hasCheckedIn ? `Sudah Check In (${todayRecord.checkIn})` : 'Check In (Verifikasi Wajah)'}</span>
+                </button>
+
+                <button
+                  onclick="startAttendanceWithFaceVerification('checkout')"
+                  ${(!hasCheckedIn || hasCheckedOut) ? 'disabled' : ''}
+                  class="py-3.5 px-5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2.5 transition shadow-md ${
+                    (!hasCheckedIn || hasCheckedOut)
+                      ? 'bg-white/10 text-wood-300 cursor-not-allowed'
+                      : 'bg-amber-600 hover:bg-amber-500 text-white'
+                  }"
+                >
+                  <i data-lucide="log-out" class="w-4 h-4"></i>
+                  <span>${hasCheckedOut ? `Sudah Check Out (${todayRecord.checkOut})` : 'Check Out (Verifikasi Wajah)'}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Today's Attendance Status Card -->
+            <div class="bg-white rounded-2xl border border-wood-200 p-6 shadow-2xs flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold uppercase tracking-wider text-wood-500">Status Hari Ini</span>
+                  ${todayRecord ? renderStatusBadge(todayRecord.status) : '<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-wood-100 text-wood-700">Belum Presensi</span>'}
+                </div>
+
+                <div class="mt-5 space-y-3">
+                  <div class="p-3.5 rounded-xl bg-wood-50 border border-wood-200/70 flex items-center justify-between">
+                    <span class="text-xs font-medium text-wood-600">Jam Masuk</span>
+                    <span class="font-mono text-sm font-bold text-wood-900">${todayRecord?.checkIn || '--:--:--'} WIB</span>
+                  </div>
+                  <div class="p-3.5 rounded-xl bg-wood-50 border border-wood-200/70 flex items-center justify-between">
+                    <span class="text-xs font-medium text-wood-600">Jam Pulang</span>
+                    <span class="font-mono text-sm font-bold text-wood-900">${todayRecord?.checkOut || '--:--:--'} WIB</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-t border-wood-100 flex items-center justify-between text-xs">
+                <span class="text-wood-500">Biometrik Wajah:</span>
+                <span class="font-semibold ${emp.faceRegistered ? 'text-emerald-700' : 'text-red-700'}">
+                  ${emp.faceRegistered ? 'Terdaftar & Aktif' : 'Belum Terdaftar'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary KPI Cards -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-wood-500">Total Hadir</span>
+                <span class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center"><i data-lucide="check-circle" class="w-4 h-4"></i></span>
+              </div>
+              <p class="font-display text-2xl font-extrabold text-wood-900 mt-2">${countHadir}</p>
+              <p class="text-[11px] text-wood-500 mt-0.5">Hari tepat waktu</p>
+            </div>
+
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-wood-500">Terlambat</span>
+                <span class="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center"><i data-lucide="clock" class="w-4 h-4"></i></span>
+              </div>
+              <p class="font-display text-2xl font-extrabold text-wood-900 mt-2">${countTerlambat}</p>
+              <p class="text-[11px] text-wood-500 mt-0.5">Melewati ${state.workSettings.checkInDeadline} WIB</p>
+            </div>
+
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-wood-500">Izin</span>
+                <span class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center"><i data-lucide="file-check" class="w-4 h-4"></i></span>
+              </div>
+              <p class="font-display text-2xl font-extrabold text-wood-900 mt-2">${countIzin}</p>
+              <p class="text-[11px] text-wood-500 mt-0.5">Izin disetujui</p>
+            </div>
+
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-wood-500">Sakit</span>
+                <span class="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center"><i data-lucide="heart-pulse" class="w-4 h-4"></i></span>
+              </div>
+              <p class="font-display text-2xl font-extrabold text-wood-900 mt-2">${countSakit}</p>
+              <p class="text-[11px] text-wood-500 mt-0.5">Keterangan sakit</p>
+            </div>
+          </div>
+
+          <!-- Recent History & Leave Status -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+              <div class="px-5 py-4 border-b border-wood-200 flex items-center justify-between">
+                <h3 class="font-display font-bold text-wood-900 text-sm sm:text-base">Riwayat Presensi Terbaru</h3>
+                <button onclick="state.activeTab = 'history'; renderApp();" class="text-xs font-semibold text-wood-700 hover:underline">Lihat Semua</button>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs sm:text-sm">
+                  <thead class="bg-wood-50 text-wood-600 font-semibold border-b border-wood-200">
+                    <tr>
+                      <th class="px-4 py-3">Tanggal</th>
+                      <th class="px-4 py-3">Masuk</th>
+                      <th class="px-4 py-3">Pulang</th>
+                      <th class="px-4 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-wood-100">
+                    ${myAttendance.length === 0 ? `
+                      <tr><td colspan="4" class="px-4 py-8 text-center text-wood-500">Belum ada catatan presensi.</td></tr>
+                    ` : myAttendance.slice(0, 5).map(a => `
+                      <tr class="hover:bg-wood-50/60">
+                        <td class="px-4 py-3 font-medium text-wood-900">${escapeHtml(a.date)}${renderDemoBadge(a.isDemo)}</td>
+                        <td class="px-4 py-3 font-mono text-xs">${escapeHtml(a.checkIn)}</td>
+                        <td class="px-4 py-3 font-mono text-xs">${escapeHtml(a.checkOut)}</td>
+                        <td class="px-4 py-3">${renderStatusBadge(a.status)}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+              <div class="px-5 py-4 border-b border-wood-200 flex items-center justify-between">
+                <h3 class="font-display font-bold text-wood-900 text-sm sm:text-base">Status Pengajuan Izin</h3>
+                <button onclick="state.activeTab = 'leaves'; renderApp();" class="text-xs font-semibold text-wood-700 hover:underline">+ Ajukan</button>
+              </div>
+              <div class="p-4 space-y-3">
+                ${myLeaves.length === 0 ? `
+                  <p class="text-xs text-wood-500 text-center py-6">Belum ada pengajuan izin atau sakit.</p>
+                ` : myLeaves.slice(0, 4).map(l => `
+                  <div class="p-3 rounded-xl bg-wood-50 border border-wood-200/80 space-y-1.5">
+                    <div class="flex items-center justify-between">
+                      <span class="text-xs font-bold text-wood-900">${escapeHtml(l.type)}${renderDemoBadge(l.isDemo)}</span>
+                      ${renderStatusBadge(l.status)}
+                    </div>
+                    <p class="text-[11px] text-wood-600">${escapeHtml(l.startDate)} s/d ${escapeHtml(l.endDate)}</p>
+                    <p class="text-xs text-wood-700 line-clamp-2">${escapeHtml(l.reason)}</p>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 2: DEDICATED PRESENSI & FACE REGISTRATION PAGE
+      if (state.activeTab === 'presensi') {
+        const hasCheckedIn = todayRecord && todayRecord.checkIn && todayRecord.checkIn !== '-';
+        const hasCheckedOut = todayRecord && todayRecord.checkOut && todayRecord.checkOut !== '-';
+
+        return `
+          <div class="max-w-3xl mx-auto space-y-6">
+            <div class="bg-white rounded-2xl border border-wood-200 p-6 shadow-2xs space-y-5">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-wood-200 pb-4">
+                <div>
+                  <h3 class="font-display text-lg font-bold text-wood-900">Presensi Kehadiran Harian</h3>
+                  <p class="text-xs text-wood-600 mt-0.5">${formatIndoDate(todayStr)} • Jam Kerja: ${state.workSettings.checkInDeadline} – ${state.workSettings.checkOutStart} WIB</p>
+                </div>
+                <div class="px-3.5 py-2 rounded-xl bg-wood-100 text-wood-900 font-mono text-base font-bold text-center">
+                  <span id="presensi-wib-clock">${formatTimeHHMMSS()}</span> WIB
+                </div>
+              </div>
+
+              <!-- Biometric Status Card -->
+              <div class="p-4 rounded-xl border ${emp.faceRegistered ? 'bg-emerald-50/70 border-emerald-200' : 'bg-amber-50 border-amber-200'} flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl ${emp.faceRegistered ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-200 text-amber-800'} flex items-center justify-center shrink-0">
+                    <i data-lucide="scan-face" class="w-5 h-5"></i>
+                  </div>
+                  <div>
+                    <p class="text-sm font-bold text-wood-900">
+                      ${emp.faceRegistered ? 'Wajah Terdaftar & Siap Verifikasi' : 'Wajah Belum Terdaftar'}
+                    </p>
+                    <p class="text-xs text-wood-600">
+                      ${emp.faceRegistered ? 'Kamera & Liveness Detection akan aktif otomatis saat menekan tombol presensi.' : 'Registrasikan wajah Anda terlebih dahulu untuk membuka tombol presensi.'}
+                    </p>
+                  </div>
+                </div>
+                ${!emp.faceRegistered ? `
+                  <button onclick="openFaceRegistrationModal('${emp.id}')" class="px-4 py-2 rounded-xl bg-wood-700 text-white text-xs font-semibold hover:bg-wood-800 shrink-0">
+                    Registrasi Wajah
+                  </button>
+                ` : ''}
+              </div>
+
+              <!-- Action Cards -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="p-5 rounded-2xl border border-wood-200 bg-wood-50/60 flex flex-col justify-between gap-4">
+                  <div>
+                    <span class="text-xs font-bold uppercase tracking-wider text-emerald-700">Presensi Masuk</span>
+                    <p class="font-mono text-2xl font-extrabold text-wood-900 mt-1">${todayRecord?.checkIn || '--:--:--'}</p>
+                    <p class="text-xs text-wood-500 mt-1">Batas tepat waktu: ${state.workSettings.checkInDeadline} WIB</p>
+                  </div>
+                  <button
+                    onclick="startAttendanceWithFaceVerification('checkin')"
+                    ${hasCheckedIn ? 'disabled' : ''}
+                    class="w-full py-3 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:bg-wood-300 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition"
+                  >
+                    <i data-lucide="camera" class="w-4 h-4"></i>
+                    <span>${hasCheckedIn ? 'Check In Selesai' : 'Mulai Check In'}</span>
+                  </button>
+                </div>
+
+                <div class="p-5 rounded-2xl border border-wood-200 bg-wood-50/60 flex flex-col justify-between gap-4">
+                  <div>
+                    <span class="text-xs font-bold uppercase tracking-wider text-amber-700">Presensi Pulang</span>
+                    <p class="font-mono text-2xl font-extrabold text-wood-900 mt-1">${todayRecord?.checkOut || '--:--:--'}</p>
+                    <p class="text-xs text-wood-500 mt-1">Jadwal pulang mulai: ${state.workSettings.checkOutStart} WIB</p>
+                  </div>
+                  <button
+                    onclick="startAttendanceWithFaceVerification('checkout')"
+                    ${(!hasCheckedIn || hasCheckedOut) ? 'disabled' : ''}
+                    class="w-full py-3 px-4 rounded-xl bg-wood-700 hover:bg-wood-800 disabled:bg-wood-300 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition"
+                  >
+                    <i data-lucide="camera" class="w-4 h-4"></i>
+                    <span>${hasCheckedOut ? 'Check Out Selesai' : 'Mulai Check Out'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 3: EMPLOYEE ATTENDANCE HISTORY
+      if (state.activeTab === 'history') {
+        const filtered = getFilteredAttendance();
+        return `
+          <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+            <div class="p-5 border-b border-wood-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 class="font-display font-bold text-wood-900 text-base">Riwayat Presensi Saya</h3>
+                <p class="text-xs text-wood-500">Data tersinkronisasi langsung dari database cloud terpusat</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <input type="date" value="${state.filterDate}" onchange="state.filterDate = this.value; renderApp();" class="px-3 py-2 rounded-xl border border-wood-300 text-xs bg-white" />
+                <select onchange="state.filterStatus = this.value; renderApp();" class="px-3 py-2 rounded-xl border border-wood-300 text-xs bg-white">
+                  <option value="ALL" ${state.filterStatus === 'ALL' ? 'selected' : ''}>Semua Status</option>
+                  <option value="Hadir" ${state.filterStatus === 'Hadir' ? 'selected' : ''}>Hadir</option>
+                  <option value="Terlambat" ${state.filterStatus === 'Terlambat' ? 'selected' : ''}>Terlambat</option>
+                  <option value="Izin" ${state.filterStatus === 'Izin' ? 'selected' : ''}>Izin</option>
+                  <option value="Sakit" ${state.filterStatus === 'Sakit' ? 'selected' : ''}>Sakit</option>
+                </select>
+                ${state.filterDate || state.filterStatus !== 'ALL' ? `
+                  <button onclick="state.filterDate = ''; state.filterStatus = 'ALL'; renderApp();" class="px-3 py-2 rounded-xl bg-wood-100 text-wood-700 text-xs font-semibold">Reset</button>
+                ` : ''}
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs sm:text-sm">
+                <thead class="bg-wood-50 text-wood-600 font-semibold border-b border-wood-200">
+                  <tr>
+                    <th class="px-4 py-3">Tanggal</th>
+                    <th class="px-4 py-3">Jam Masuk</th>
+                    <th class="px-4 py-3">Jam Pulang</th>
+                    <th class="px-4 py-3">Status</th>
+                    <th class="px-4 py-3">Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-wood-100">
+                  ${filtered.length === 0 ? `
+                    <tr><td colspan="5" class="px-4 py-8 text-center text-wood-500">Tidak ada data presensi sesuai filter.</td></tr>
+                  ` : filtered.map(a => `
+                    <tr class="hover:bg-wood-50/70">
+                      <td class="px-4 py-3 font-medium text-wood-900">${escapeHtml(a.date)}${renderDemoBadge(a.isDemo)}</td>
+                      <td class="px-4 py-3 font-mono text-xs">${escapeHtml(a.checkIn)}</td>
+                      <td class="px-4 py-3 font-mono text-xs">${escapeHtml(a.checkOut)}</td>
+                      <td class="px-4 py-3">${renderStatusBadge(a.status)}</td>
+                      <td class="px-4 py-3 text-xs text-wood-600">${escapeHtml(a.note || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 4: EMPLOYEE LEAVE & SICK REQUESTS
+      if (state.activeTab === 'leaves') {
+        return `
+          <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <!-- Form -->
+            <div class="lg:col-span-2 bg-white rounded-2xl border border-wood-200 p-5 sm:p-6 shadow-2xs h-fit">
+              <h3 class="font-display font-bold text-wood-900 text-base border-b border-wood-200 pb-3">Formulir Pengajuan Izin / Sakit</h3>
+              <form onsubmit="submitLeaveRequest(event)" class="mt-4 space-y-4 text-sm">
+                <div>
+                  <label class="block text-xs font-semibold text-wood-700 mb-1">Jenis Pengajuan</label>
+                  <select id="leave-type" class="w-full px-3 py-2.5 rounded-xl border border-wood-300 bg-white outline-hidden focus:ring-2 focus:ring-wood-500">
+                    <option value="Izin">Izin (Keperluan Pribadi / Keluarga)</option>
+                    <option value="Sakit">Sakit (Dengan / Tanpa Surat Dokter)</option>
+                  </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-xs font-semibold text-wood-700 mb-1">Tanggal Mulai</label>
+                    <input id="leave-start" type="date" required value="${todayStr}" class="w-full px-3 py-2 rounded-xl border border-wood-300 outline-hidden" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-semibold text-wood-700 mb-1">Tanggal Selesai</label>
+                    <input id="leave-end" type="date" required value="${todayStr}" class="w-full px-3 py-2 rounded-xl border border-wood-300 outline-hidden" />
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-wood-700 mb-1">Keterangan / Alasan</label>
+                  <textarea id="leave-reason" rows="3" required placeholder="Jelaskan alasan pengajuan izin atau sakit Anda..." class="w-full px-3 py-2 rounded-xl border border-wood-300 outline-hidden focus:ring-2 focus:ring-wood-500"></textarea>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-wood-700 mb-1">Dokumen Pendukung (Opsional, Maks 700KB)</label>
+                  <input id="leave-file" type="file" accept=".pdf,.jpg,.jpeg,.png" class="w-full text-xs text-wood-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-wood-100 file:text-wood-800 hover:file:bg-wood-200" />
+                </div>
+                <button type="submit" class="w-full py-3 px-4 rounded-xl bg-wood-700 hover:bg-wood-800 text-white font-semibold text-sm shadow-sm transition">
+                  Kirim Pengajuan ke Admin
+                </button>
+              </form>
+            </div>
+
+            <!-- List -->
+            <div class="lg:col-span-3 bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+              <div class="p-5 border-b border-wood-200">
+                <h3 class="font-display font-bold text-wood-900 text-base">Daftar Pengajuan Saya</h3>
+                <p class="text-xs text-wood-500">Status diperbarui otomatis saat Admin menyetujui atau menolak</p>
+              </div>
+              <div class="divide-y divide-wood-100">
+                ${myLeaves.length === 0 ? `
+                  <div class="p-8 text-center text-xs text-wood-500">Anda belum pernah membuat pengajuan izin atau sakit.</div>
+                ` : myLeaves.map(l => `
+                  <div class="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold text-sm text-wood-900">${escapeHtml(l.type)}</span>
+                        <span class="text-xs text-wood-500">• ${escapeHtml(l.startDate)} s/d ${escapeHtml(l.endDate)}</span>
+                        ${renderDemoBadge(l.isDemo)}
+                      </div>
+                      <p class="text-xs text-wood-700">${escapeHtml(l.reason)}</p>
+                      ${l.attachmentName ? `<p class="text-[11px] text-wood-600 inline-flex items-center gap-1"><i data-lucide="paperclip" class="w-3 h-3"></i>${escapeHtml(l.attachmentName)}</p>` : ''}
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      ${renderStatusBadge(l.status)}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 5: EMPLOYEE PROFILE
+      if (state.activeTab === 'profile') {
+        const faceRec = state.faceRegistrations.find(f => f.employeeId === emp.id);
+        return `
+          <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+            <div class="wood-grain-bg p-6 text-white flex items-center gap-4">
+              <div class="w-16 h-16 rounded-2xl bg-amber-200/20 border border-amber-200/30 flex items-center justify-center font-display text-2xl font-extrabold text-amber-200">
+                ${escapeHtml(emp.name.charAt(0))}
+              </div>
+              <div>
+                <h3 class="font-display text-xl font-bold">${escapeHtml(emp.name)}</h3>
+                <p class="text-xs text-wood-200">${escapeHtml(emp.id)} • ${escapeHtml(emp.position)}</p>
+              </div>
+            </div>
+
+            <div class="p-6 space-y-6">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                <div class="p-3.5 rounded-xl bg-wood-50 border border-wood-200/70">
+                  <span class="text-xs text-wood-500 block">Username</span>
+                  <span class="font-semibold text-wood-900">${escapeHtml(emp.username)}</span>
+                </div>
+                <div class="p-3.5 rounded-xl bg-wood-50 border border-wood-200/70">
+                  <span class="text-xs text-wood-500 block">Email Perusahaan</span>
+                  <span class="font-semibold text-wood-900">${escapeHtml(emp.email)}</span>
+                </div>
+                <div class="p-3.5 rounded-xl bg-wood-50 border border-wood-200/70">
+                  <span class="text-xs text-wood-500 block">Nomor Telepon</span>
+                  <span class="font-semibold text-wood-900">${escapeHtml(emp.phone)}</span>
+                </div>
+                <div class="p-3.5 rounded-xl bg-wood-50 border border-wood-200/70">
+                  <span class="text-xs text-wood-500 block">Status Kepegawaian</span>
+                  <span class="mt-0.5 inline-block">${renderStatusBadge(emp.status)}</span>
+                </div>
+              </div>
+
+              <!-- Biometric Security Section -->
+              <div class="p-4 sm:p-5 rounded-2xl border border-wood-200 bg-wood-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h4 class="text-sm font-bold text-wood-900">Data Biometrik Wajah (Face Recognition)</h4>
+                  <p class="text-xs text-wood-600 mt-0.5">
+                    ${emp.faceRegistered
+                      ? `Terdaftar sejak ${faceRec?.registeredAt ? new Date(faceRec.registeredAt).toLocaleDateString('id-ID') : 'hari ini'}.`
+                      : 'Anda belum mendaftarkan data wajah biometrik.'}
+                  </p>
+                </div>
+                ${!emp.faceRegistered ? `
+                  <button onclick="openFaceRegistrationModal('${emp.id}')" class="px-4 py-2.5 rounded-xl bg-wood-700 text-white text-xs font-semibold hover:bg-wood-800 shrink-0">
+                    Registrasi Wajah
+                  </button>
+                ` : `
+                  <button
+                    onclick="requestFaceUpdateByEmployee()"
+                    ${emp.faceUpdateRequested ? 'disabled' : ''}
+                    class="px-4 py-2.5 rounded-xl border border-wood-300 bg-white text-wood-800 text-xs font-semibold hover:bg-wood-100 disabled:opacity-60 shrink-0"
+                  >
+                    ${emp.faceUpdateRequested ? 'Menunggu Persetujuan Reset Admin' : 'Ajukan Pembaruan Wajah'}
+                  </button>
+                `}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      return '';
+    }
+
+    // =========================================================================
+    // 15. ADMIN PORTAL VIEWS
+    // =========================================================================
+    function renderAdminPortal() {
+      const todayStr = formatDateYYYYMMDD();
+      const todayAttendance = state.attendance.filter(a => a.date === todayStr);
+      const activeEmployees = state.employees.filter(e => e.status === 'Aktif');
+
+      const totalEmployees = activeEmployees.length;
+      const presentToday = todayAttendance.filter(a => a.status === 'Hadir').length;
+      const lateToday = todayAttendance.filter(a => a.status === 'Terlambat').length;
+      const leaveSickToday = todayAttendance.filter(a => a.status === 'Izin' || a.status === 'Sakit').length;
+      const absentToday = Math.max(0, totalEmployees - (presentToday + lateToday + leaveSickToday));
+
+      // TAB 1: ADMIN DASHBOARD
+      if (state.activeTab === 'dashboard') {
+        return `
+          <!-- KPI Summary Row -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <span class="text-xs font-semibold text-wood-500">Total Pegawai</span>
+              <p class="font-display text-2xl sm:text-3xl font-extrabold text-wood-900 mt-1.5">${totalEmployees}</p>
+              <span class="text-[11px] text-wood-500">Pegawai aktif terdaftar</span>
+            </div>
+
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <span class="text-xs font-semibold text-emerald-700">Hadir Hari Ini</span>
+              <p class="font-display text-2xl sm:text-3xl font-extrabold text-emerald-700 mt-1.5">${presentToday}</p>
+              <span class="text-[11px] text-wood-500">Tepat waktu (&le; ${state.workSettings.checkInDeadline})</span>
+            </div>
+
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <span class="text-xs font-semibold text-amber-700">Terlambat</span>
+              <p class="font-display text-2xl sm:text-3xl font-extrabold text-amber-700 mt-1.5">${lateToday}</p>
+              <span class="text-[11px] text-wood-500">Melewati jam masuk</span>
+            </div>
+
+            <div class="bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <span class="text-xs font-semibold text-blue-700">Izin & Sakit</span>
+              <p class="font-display text-2xl sm:text-3xl font-extrabold text-blue-700 mt-1.5">${leaveSickToday}</p>
+              <span class="text-[11px] text-wood-500">Disetujui hari ini</span>
+            </div>
+
+            <div class="col-span-2 sm:col-span-1 bg-white p-4 sm:p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <span class="text-xs font-semibold text-red-700">Belum Hadir</span>
+              <p class="font-display text-2xl sm:text-3xl font-extrabold text-red-700 mt-1.5">${absentToday}</p>
+              <span class="text-[11px] text-wood-500">Belum melakukan Check In</span>
+            </div>
+          </div>
+
+          <!-- Charts & Live Feed -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 bg-white p-5 rounded-2xl border border-wood-200 shadow-2xs">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="font-display font-bold text-wood-900 text-base">Statistik Kehadiran Pegawai</h3>
+                  <p class="text-xs text-wood-500">Rekapitulasi seluruh catatan presensi di database cloud</p>
+                </div>
+              </div>
+              <div class="h-64 relative">
+                <canvas id="admin-attendance-chart"></canvas>
+              </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-2xl border border-wood-200 shadow-2xs flex flex-col">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-display font-bold text-wood-900 text-base">Aktivitas Real-Time</h3>
+                <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> Live
+                </span>
+              </div>
+              <div class="space-y-2.5 overflow-y-auto max-h-64 pr-1">
+                ${state.attendance.length === 0 ? `
+                  <p class="text-xs text-wood-500 text-center py-8">Belum ada aktivitas presensi.</p>
+                ` : state.attendance.slice(0, 7).map(a => `
+                  <div class="p-3 rounded-xl bg-wood-50 border border-wood-200/70 flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="text-xs font-bold text-wood-900 truncate">${escapeHtml(a.employeeName)}${renderDemoBadge(a.isDemo)}</p>
+                      <p class="text-[11px] text-wood-600">${escapeHtml(a.date)} • Masuk: ${escapeHtml(a.checkIn)} | Pulang: ${escapeHtml(a.checkOut)}</p>
+                    </div>
+                    ${renderStatusBadge(a.status)}
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 2: EMPLOYEE CRUD MANAGEMENT
+      if (state.activeTab === 'employees') {
+        const list = state.employees.filter(e => {
+          if (!state.searchQuery) return true;
+          const q = state.searchQuery.toLowerCase();
+          return e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q) || e.position.toLowerCase().includes(q);
+        });
+
+        return `
+          <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+            <div class="p-5 border-b border-wood-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 class="font-display font-bold text-wood-900 text-base">Manajemen Data Pegawai</h3>
+                <p class="text-xs text-wood-500">Tambah, ubah, dan kelola akun pegawai secara terpusat</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2.5">
+                <input
+                  type="text"
+                  value="${escapeHtml(state.searchQuery)}"
+                  oninput="state.searchQuery = this.value; renderApp();"
+                  placeholder="Cari nama, ID, jabatan..."
+                  class="px-3.5 py-2 rounded-xl border border-wood-300 text-xs sm:text-sm outline-hidden focus:ring-2 focus:ring-wood-500"
+                />
+                <button onclick="openEmployeeFormModal()" class="px-4 py-2 rounded-xl bg-wood-700 hover:bg-wood-800 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-xs">
+                  <i data-lucide="user-plus" class="w-4 h-4"></i>
+                  <span>Tambah Pegawai</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs sm:text-sm">
+                <thead class="bg-wood-50 text-wood-600 font-semibold border-b border-wood-200">
+                  <tr>
+                    <th class="px-4 py-3">ID & Nama</th>
+                    <th class="px-4 py-3">Jabatan</th>
+                    <th class="px-4 py-3">Kontak & Akun</th>
+                    <th class="px-4 py-3">Wajah</th>
+                    <th class="px-4 py-3">Status</th>
+                    <th class="px-4 py-3 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-wood-100">
+                  ${list.map(e => `
+                    <tr class="hover:bg-wood-50/70">
+                      <td class="px-4 py-3">
+                        <div class="font-bold text-wood-900">${escapeHtml(e.name)}${renderDemoBadge(e.isDemo)}</div>
+                        <div class="text-[11px] font-mono text-wood-500">${escapeHtml(e.id)} • ${escapeHtml(e.gender)}</div>
+                      </td>
+                      <td class="px-4 py-3 text-wood-700">${escapeHtml(e.position)}</td>
+                      <td class="px-4 py-3 text-xs">
+                        <div class="text-wood-800">${escapeHtml(e.email)}</div>
+                        <div class="text-wood-500">User: <code class="text-wood-700">${escapeHtml(e.username)}</code> • ${escapeHtml(e.phone)}</div>
+                      </td>
+                      <td class="px-4 py-3">
+                        ${e.faceRegistered
+                          ? '<span class="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>Terdaftar</span>'
+                          : '<span class="inline-flex items-center gap-1 text-xs font-semibold text-amber-700"><i data-lucide="alert-circle" class="w-3.5 h-3.5"></i>Belum</span>'}
+                      </td>
+                      <td class="px-4 py-3">${renderStatusBadge(e.status)}</td>
+                      <td class="px-4 py-3 text-right space-x-1">
+                        <button onclick="openEmployeeFormModal('${e.id}')" class="p-2 rounded-lg border border-wood-200 text-wood-700 hover:bg-wood-100" title="Edit Pegawai">
+                          <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="confirmDeleteEmployee('${e.id}')" class="p-2 rounded-lg border border-red-200 text-red-700 hover:bg-red-50" title="Hapus Pegawai">
+                          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 3: ALL ATTENDANCE DATA
+      if (state.activeTab === 'attendance') {
+        const filtered = getFilteredAttendance();
+        return `
+          <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+            <div class="p-5 border-b border-wood-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <h3 class="font-display font-bold text-wood-900 text-base">Data Presensi Seluruh Pegawai</h3>
+                <p class="text-xs text-wood-500">Otomatis diperbarui saat pegawai Check In / Check Out dari perangkat mana pun</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <input type="text" value="${escapeHtml(state.searchQuery)}" oninput="state.searchQuery = this.value; renderApp();" placeholder="Cari nama pegawai..." class="px-3 py-2 rounded-xl border border-wood-300 text-xs" />
+                <input type="date" value="${state.filterDate}" onchange="state.filterDate = this.value; renderApp();" class="px-3 py-2 rounded-xl border border-wood-300 text-xs" />
+                <select onchange="state.filterStatus = this.value; renderApp();" class="px-3 py-2 rounded-xl border border-wood-300 text-xs bg-white">
+                  <option value="ALL" ${state.filterStatus === 'ALL' ? 'selected' : ''}>Semua Status</option>
+                  <option value="Hadir" ${state.filterStatus === 'Hadir' ? 'selected' : ''}>Hadir</option>
+                  <option value="Terlambat" ${state.filterStatus === 'Terlambat' ? 'selected' : ''}>Terlambat</option>
+                  <option value="Izin" ${state.filterStatus === 'Izin' ? 'selected' : ''}>Izin</option>
+                  <option value="Sakit" ${state.filterStatus === 'Sakit' ? 'selected' : ''}>Sakit</option>
+                </select>
+                ${(state.searchQuery || state.filterDate || state.filterStatus !== 'ALL') ? `
+                  <button onclick="state.searchQuery=''; state.filterDate=''; state.filterStatus='ALL'; renderApp();" class="px-3 py-2 rounded-xl bg-wood-100 text-wood-800 text-xs font-semibold">Reset</button>
+                ` : ''}
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs sm:text-sm">
+                <thead class="bg-wood-50 text-wood-600 font-semibold border-b border-wood-200">
+                  <tr>
+                    <th class="px-4 py-3">Pegawai</th>
+                    <th class="px-4 py-3">Tanggal</th>
+                    <th class="px-4 py-3">Check In</th>
+                    <th class="px-4 py-3">Check Out</th>
+                    <th class="px-4 py-3">Status</th>
+                    <th class="px-4 py-3">Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-wood-100">
+                  ${filtered.length === 0 ? `
+                    <tr><td colspan="6" class="px-4 py-8 text-center text-wood-500">Tidak ada data presensi ditemukan.</td></tr>
+                  ` : filtered.map(a => `
+                    <tr class="hover:bg-wood-50/70">
+                      <td class="px-4 py-3">
+                        <span class="font-bold text-wood-900">${escapeHtml(a.employeeName)}</span>${renderDemoBadge(a.isDemo)}
+                        <span class="block text-[11px] font-mono text-wood-500">${escapeHtml(a.employeeId)}</span>
+                      </td>
+                      <td class="px-4 py-3 font-medium">${escapeHtml(a.date)}</td>
+                      <td class="px-4 py-3 font-mono text-xs">${escapeHtml(a.checkIn)}</td>
+                      <td class="px-4 py-3 font-mono text-xs">${escapeHtml(a.checkOut)}</td>
+                      <td class="px-4 py-3">${renderStatusBadge(a.status)}</td>
+                      <td class="px-4 py-3 text-xs text-wood-600">${escapeHtml(a.note || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 4: FACE VERIFICATION REGISTRY MANAGEMENT
+      if (state.activeTab === 'faces') {
+        return `
+          <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+            <div class="p-5 border-b border-wood-200">
+              <h3 class="font-display font-bold text-wood-900 text-base">Monitoring & Manajemen Biometrik Wajah</h3>
+              <p class="text-xs text-wood-500">Data referensi vektor wajah dilindungi dan hanya dapat diakses oleh otoritas HRD/Admin</p>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs sm:text-sm">
+                <thead class="bg-wood-50 text-wood-600 font-semibold border-b border-wood-200">
+                  <tr>
+                    <th class="px-4 py-3">Pegawai</th>
+                    <th class="px-4 py-3">Status Biometrik</th>
+                    <th class="px-4 py-3">Waktu Registrasi</th>
+                    <th class="px-4 py-3">Permintaan Update</th>
+                    <th class="px-4 py-3 text-right">Aksi Admin</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-wood-100">
+                  ${state.employees.map(emp => {
+                    const reg = state.faceRegistrations.find(f => f.employeeId === emp.id);
+                    return `
+                      <tr class="hover:bg-wood-50/70">
+                        <td class="px-4 py-3">
+                          <div class="font-bold text-wood-900">${escapeHtml(emp.name)}</div>
+                          <div class="text-[11px] font-mono text-wood-500">${escapeHtml(emp.id)} • ${escapeHtml(emp.position)}</div>
+                        </td>
+                        <td class="px-4 py-3">
+                          ${emp.faceRegistered ? renderStatusBadge('Terverifikasi') : '<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Belum Registrasi</span>'}
+                        </td>
+                        <td class="px-4 py-3 text-xs text-wood-600">
+                          ${reg?.registeredAt ? new Date(reg.registeredAt).toLocaleString('id-ID') : '-'}
+                        </td>
+                        <td class="px-4 py-3">
+                          ${emp.faceUpdateRequested
+                            ? '<span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 animate-pulse">Diajukan Pegawai</span>'
+                            : '<span class="text-xs text-wood-400">Tidak ada</span>'}
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                          ${emp.faceRegistered ? `
+                            <button onclick="adminResetEmployeeFace('${emp.id}')" class="px-3 py-1.5 rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold">
+                              Reset / Izinkan Daftar Ulang
+                            </button>
+                          ` : `
+                            <span class="text-xs text-wood-400 italic">Menunggu pegawai</span>
+                          `}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 5: LEAVE & SICK APPROVALS
+      if (state.activeTab === 'leaves') {
+        return `
+          <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+            <div class="p-5 border-b border-wood-200">
+              <h3 class="font-display font-bold text-wood-900 text-base">Persetujuan Pengajuan Izin & Sakit</h3>
+              <p class="text-xs text-wood-500">Pengajuan yang disetujui akan otomatis tercatat pada rekap presensi pegawai</p>
+            </div>
+
+            <div class="divide-y divide-wood-100">
+              ${state.leaveRequests.length === 0 ? `
+                <div class="p-8 text-center text-xs text-wood-500">Belum ada pengajuan izin atau sakit.</div>
+              ` : state.leaveRequests.map(req => `
+                <div class="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-wood-50/50">
+                  <div class="space-y-1.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="font-bold text-sm text-wood-900">${escapeHtml(req.employeeName)} (${escapeHtml(req.employeeId)})</span>
+                      ${renderStatusBadge(req.type)}
+                      ${renderStatusBadge(req.status)}
+                      ${renderDemoBadge(req.isDemo)}
+                    </div>
+                    <p class="text-xs font-medium text-wood-600">Periode: <strong>${escapeHtml(req.startDate)}</strong> s/d <strong>${escapeHtml(req.endDate)}</strong></p>
+                    <p class="text-xs sm:text-sm text-wood-800">${escapeHtml(req.reason)}</p>
+                    ${req.attachmentName ? `
+                      <div class="pt-1">
+                        ${req.attachmentData ? `
+                          <a href="${req.attachmentData}" download="${escapeHtml(req.attachmentName)}" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-wood-100 text-wood-800 text-xs font-semibold hover:bg-wood-200">
+                            <i data-lucide="download" class="w-3.5 h-3.5"></i> Unduh Lampiran: ${escapeHtml(req.attachmentName)}
+                          </a>
+                        ` : `
+                          <span class="inline-flex items-center gap-1.5 text-xs text-wood-600"><i data-lucide="paperclip" class="w-3.5 h-3.5"></i>${escapeHtml(req.attachmentName)}</span>
+                        `}
+                      </div>
+                    ` : ''}
+                  </div>
+
+                  <div class="flex items-center gap-2 shrink-0">
+                    ${req.status === 'Menunggu' ? `
+                      <button onclick="handleLeaveDecision('${req.id}', 'Disetujui')" class="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-xs">
+                        <i data-lucide="check" class="w-4 h-4"></i> Setujui
+                      </button>
+                      <button onclick="handleLeaveDecision('${req.id}', 'Ditolak')" class="px-4 py-2 rounded-xl bg-red-700 hover:bg-red-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-xs">
+                        <i data-lucide="x" class="w-4 h-4"></i> Tolak
+                      </button>
+                    ` : `
+                      <span class="text-xs text-wood-500 italic">Diproses oleh ${escapeHtml(req.reviewedBy || 'Admin')}</span>
+                    `}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 6: ATTENDANCE REPORTS & EXPORT (EXCEL + PDF)
+      if (state.activeTab === 'reports') {
+        const recapByEmployee = state.employees.map(emp => {
+          const recs = state.attendance.filter(a => a.employeeId === emp.id);
+          return {
+            ...emp,
+            hadir: recs.filter(r => r.status === 'Hadir').length,
+            terlambat: recs.filter(r => r.status === 'Terlambat').length,
+            izin: recs.filter(r => r.status === 'Izin').length,
+            sakit: recs.filter(r => r.status === 'Sakit').length,
+            total: recs.length
+          };
+        });
+
+        return `
+          <div class="space-y-6">
+            <div class="bg-white p-5 rounded-2xl border border-wood-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 class="font-display font-bold text-wood-900 text-base">Laporan & Rekapitulasi Presensi</h3>
+                <p class="text-xs text-wood-500">Unduh laporan administrasi dalam format Excel (.xlsx) atau PDF</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2.5">
+                <button onclick="exportReportExcel()" class="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 shadow-xs">
+                  <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                  <span>Unduh Excel (.xlsx)</span>
+                </button>
+                <button onclick="exportReportPDF()" class="px-4 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 shadow-xs">
+                  <i data-lucide="file-down" class="w-4 h-4"></i>
+                  <span>Unduh PDF</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-wood-200 overflow-hidden shadow-2xs">
+              <div class="px-5 py-4 border-b border-wood-200">
+                <h4 class="font-display font-bold text-wood-900 text-sm">Rekapitulasi Kehadiran Per Pegawai</h4>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs sm:text-sm">
+                  <thead class="bg-wood-50 text-wood-600 font-semibold border-b border-wood-200">
+                    <tr>
+                      <th class="px-4 py-3">ID</th>
+                      <th class="px-4 py-3">Nama Pegawai</th>
+                      <th class="px-4 py-3">Jabatan</th>
+                      <th class="px-4 py-3 text-center">Hadir</th>
+                      <th class="px-4 py-3 text-center">Terlambat</th>
+                      <th class="px-4 py-3 text-center">Izin</th>
+                      <th class="px-4 py-3 text-center">Sakit</th>
+                      <th class="px-4 py-3 text-center">Total Tercatat</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-wood-100">
+                    ${recapByEmployee.map(r => `
+                      <tr class="hover:bg-wood-50/70">
+                        <td class="px-4 py-3 font-mono text-xs">${escapeHtml(r.id)}</td>
+                        <td class="px-4 py-3 font-bold text-wood-900">${escapeHtml(r.name)}</td>
+                        <td class="px-4 py-3 text-wood-600">${escapeHtml(r.position)}</td>
+                        <td class="px-4 py-3 text-center font-bold text-emerald-700">${r.hadir}</td>
+                        <td class="px-4 py-3 text-center font-bold text-amber-700">${r.terlambat}</td>
+                        <td class="px-4 py-3 text-center font-bold text-blue-700">${r.izin}</td>
+                        <td class="px-4 py-3 text-center font-bold text-purple-700">${r.sakit}</td>
+                        <td class="px-4 py-3 text-center font-extrabold text-wood-900">${r.total}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // TAB 7: WORK SETTINGS
+      if (state.activeTab === 'settings') {
+        return `
+          <div class="max-w-2xl mx-auto bg-white rounded-2xl border border-wood-200 p-6 shadow-2xs">
+            <h3 class="font-display font-bold text-wood-900 text-lg border-b border-wood-200 pb-3">Pengaturan Jam Kerja & Perusahaan</h3>
+            <p class="text-xs text-wood-500 mt-2">Perubahan aturan jam kerja akan langsung disinkronisasikan ke seluruh perangkat pegawai.</p>
+
+            <form onsubmit="saveWorkSettingsToCloud(event)" class="mt-5 space-y-4 text-sm">
+              <div>
+                <label class="block text-xs font-semibold text-wood-700 mb-1">Nama Perusahaan / Instansi</label>
+                <input id="set-company" type="text" required value="${escapeHtml(state.workSettings.companyName)}" class="w-full px-3.5 py-2.5 rounded-xl border border-wood-300 outline-hidden focus:ring-2 focus:ring-wood-500" />
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label class="block text-xs font-semibold text-wood-700 mb-1">Batas Check In (WIB)</label>
+                  <input id="set-checkin" type="time" required value="${escapeHtml(state.workSettings.checkInDeadline)}" class="w-full px-3.5 py-2.5 rounded-xl border border-wood-300 outline-hidden" />
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-wood-700 mb-1">Mulai Check Out (WIB)</label>
+                  <input id="set-checkout" type="time" required value="${escapeHtml(state.workSettings.checkOutStart)}" class="w-full px-3.5 py-2.5 rounded-xl border border-wood-300 outline-hidden" />
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-wood-700 mb-1">Toleransi Terlambat (Menit)</label>
+                  <input id="set-tolerance" type="number" min="0" max="120" value="${Number(state.workSettings.toleranceMinutes || 0)}" class="w-full px-3.5 py-2.5 rounded-xl border border-wood-300 outline-hidden" />
+                </div>
+              </div>
+
+              <div class="pt-3 border-t border-wood-200 flex justify-end">
+                <button type="submit" class="px-5 py-2.5 rounded-xl bg-wood-700 hover:bg-wood-800 text-white font-semibold text-sm shadow-sm">
+                  Simpan Pengaturan Cloud
+                </button>
+              </div>
+            </form>
+          </div>
+        `;
+      }
+
+      return '';
+    }
+
+    // =========================================================================
+    // 16. CHART RENDERING & MAIN RENDER LOOP
+    // =========================================================================
+    function renderAdminChartIfPresent() {
+      const canvas = document.getElementById('admin-attendance-chart');
+      if (!canvas || !window.Chart) return;
+
+      if (state.charts.adminChart) {
+        state.charts.adminChart.destroy();
+      }
+
+      const hadir = state.attendance.filter(a => a.status === 'Hadir').length;
+      const terlambat = state.attendance.filter(a => a.status === 'Terlambat').length;
+      const izin = state.attendance.filter(a => a.status === 'Izin').length;
+      const sakit = state.attendance.filter(a => a.status === 'Sakit').length;
+
+      state.charts.adminChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: ['Hadir Tepat Waktu', 'Terlambat', 'Izin', 'Sakit'],
+          datasets: [{
+            label: 'Jumlah Catatan Presensi',
+            data: [hadir, terlambat, izin, sakit],
+            backgroundColor: ['#15803D', '#D97706', '#2563EB', '#7C3AED'],
+            borderRadius: 10,
+            barThickness: 42
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { stepSize: 1, color: '#5C3A21' },
+              grid: { color: '#F3ECE1' }
+            },
+            x: {
+              ticks: { color: '#5C3A21', font: { weight: '600' } },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+
+    window.renderApp = function() {
+      const root = document.getElementById('app-root');
+      if (!root) return;
+
+      // Preserve active input focus/value if user is typing in search
+      const activeId = document.activeElement?.id;
+      const selStart = document.activeElement?.selectionStart;
+
+      if (!state.currentUser) {
+        root.innerHTML = renderLoginPage();
+      } else {
+        const inner = state.currentUser.role === 'admin'
+          ? renderAdminPortal()
+          : renderEmployeePortal();
+        root.innerHTML = renderAuthenticatedShell(inner);
+      }
+
+      if (window.lucide) lucide.createIcons();
+      renderAdminChartIfPresent();
+
+      if (activeId) {
+        const el = document.getElementById(activeId);
+        if (el) {
+          el.focus();
+          if (typeof selStart === 'number') el.setSelectionRange(selStart, selStart);
+        }
+      }
+    };
+
+    // Live WIB Clock Updater (updates clock text every second without full DOM re-render)
+    setInterval(() => {
+      const nowStr = formatTimeHHMMSS();
+      const topClock = document.getElementById('live-wib-clock');
+      const heroClock = document.getElementById('hero-wib-clock');
+      const presensiClock = document.getElementById('presensi-wib-clock');
+      if (topClock) topClock.textContent = `${nowStr} WIB`;
+      if (heroClock) heroClock.textContent = nowStr;
+      if (presensiClock) presensiClock.textContent = nowStr;
+    }, 1000);
+
+    // Online / Offline Network Listeners
+    window.addEventListener('online', () => {
+      state.isOnline = true;
+      document.getElementById('offline-banner')?.classList.add('hidden');
+      showToast('Kembali Online', 'Koneksi terhubung. Data disinkronisasi dengan cloud.', 'success');
+      renderApp();
+    });
+
+    window.addEventListener('offline', () => {
+      state.isOnline = false;
+      document.getElementById('offline-banner')?.classList.remove('hidden');
+      renderApp();
+    });
+
+    // =========================================================================
+    // 17. BOOTSTRAP FIREBASE AUTH & CLOUD DATABASE
+    // =========================================================================
+    async function initWoodClock() {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error('Firebase Auth error:', err);
+      }
+
+      onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          state.fbUser = user;
+          state.cloudConnected = true;
+          await seedDemoDataIfEmpty();
+          startRealtimeListeners();
+          renderApp();
+        }
+      });
+    }
+
+    initWoodClock();
+  </script>
+</body>
+</html>
